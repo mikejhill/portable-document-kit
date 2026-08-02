@@ -1,0 +1,15 @@
+{
+  "name": "@mikejhill/portable-document-testing",
+  "version": "0.1.0",
+  "description": "In-memory reference adapters, deterministic clocks, and provider conformance utilities.",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "repository": { "type": "git", "url": "git+https://github.com/mikejhill/portable-document-kit.git", "directory": "packages/testing" },
+  "engines": { "node": ">=20.19.0" },
+  "publishConfig": { "access": "public", "provenance": true },
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsup src/index.ts --format esm --dts --clean --sourcemap" },
+  "dependencies": { "@mikejhill/portable-document-core": "^0.1.0" }
+}

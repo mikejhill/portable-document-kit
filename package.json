@@ -1,0 +1,59 @@
+{
+  "name": "portable-document-kit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Portable, local-first, optionally collaborative structured documents.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mikejhill/portable-document-kit.git"
+  },
+  "homepage": "https://github.com/mikejhill/portable-document-kit#readme",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "check": "npm run typecheck && npm run test && npm run build && npm run api:check && npm run test:packages",
+    "api:check": "node scripts/api-snapshots.mjs",
+    "api:update": "node scripts/api-snapshots.mjs --update",
+    "test": "npm run test:unit && npm run test:rules",
+    "test:unit": "vitest run --exclude tests/firestore-rules.test.ts",
+    "test:rules": "firebase emulators:exec --only firestore --project portable-document-kit-test \"vitest run --config vitest.rules.config.ts\"",
+    "test:rules:coverage": "firebase emulators:exec --only firestore --project portable-document-kit-test \"vitest run --coverage --config vitest.rules.config.ts\"",
+    "test:coverage": "vitest run --coverage --exclude tests/firestore-rules.test.ts && npm run test:rules:coverage",
+    "test:packages": "node scripts/verify-packages.mjs",
+    "typecheck": "tsc --noEmit",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "npm run check && changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.29.7",
+    "@firebase/rules-unit-testing": "^5.0.1",
+    "@standard-schema/spec": "^1.0.0",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "fake-indexeddb": "^6.2.2",
+    "firebase": "^12.0.0",
+    "firebase-tools": "^15.25.1",
+    "jsdom": "^26.1.0",
+    "lz-string": "^1.5.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.0",
+    "vitest": "^3.2.4",
+    "zod": "^3.25.0"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@mikejhill/portable-document-react",
+  "version": "0.1.0",
+  "description": "Optional React providers, hooks, selectors, actions, and workspace lifecycle bindings.",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "repository": { "type": "git", "url": "git+https://github.com/mikejhill/portable-document-kit.git", "directory": "packages/react" },
+  "engines": { "node": ">=20.19.0" },
+  "publishConfig": { "access": "public", "provenance": true },
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsup src/index.tsx --format esm --dts --clean --sourcemap --external react" },
+  "dependencies": { "@mikejhill/portable-document-core": "^0.1.0" },
+  "peerDependencies": { "react": ">=18.3.0" }
+}

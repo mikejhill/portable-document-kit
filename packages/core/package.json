@@ -1,0 +1,15 @@
+{
+  "name": "@mikejhill/portable-document-core",
+  "version": "0.1.0",
+  "description": "Validated document definitions, semantic commands, capability ports, and workspace state machines.",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "repository": { "type": "git", "url": "git+https://github.com/mikejhill/portable-document-kit.git", "directory": "packages/core" },
+  "engines": { "node": ">=20.19.0" },
+  "publishConfig": { "access": "public", "provenance": true },
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsup src/index.ts --format esm --dts --clean --sourcemap" },
+  "dependencies": { "@standard-schema/spec": "^1.0.0" }
+}

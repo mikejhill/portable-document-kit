@@ -1,0 +1,18 @@
+{
+  "name": "@portable-document-kit/example-structured-notes",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "vite build" },
+  "dependencies": {
+    "@mikejhill/portable-document-browser": "^0.1.0",
+    "@mikejhill/portable-document-codec": "^0.1.0",
+    "@mikejhill/portable-document-core": "^0.1.0",
+    "@mikejhill/portable-document-indexeddb": "^0.1.0",
+    "@mikejhill/portable-document-react": "^0.1.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": { "@vitejs/plugin-react": "^5.0.0", "vite": "^7.0.0" }
+}

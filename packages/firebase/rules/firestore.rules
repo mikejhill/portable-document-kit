@@ -1,0 +1,144 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function verified() { return signedIn() && request.auth.token.get('email_verified', false) == true; }
+    function anonymous() {
+      return signedIn() &&
+        request.auth.token.get('firebase', {}).get('sign_in_provider', '') == 'anonymous';
+    }
+    function member(data) { return signedIn() && request.auth.uid in data.memberIds; }
+    function activeGuest(documentId, data) {
+      let sessionPath = /databases/$(database)/documents/pdkDocuments/$(documentId)/editorSessions/$(request.auth.uid);
+      return anonymous() && exists(sessionPath) && activeGuestSession(documentId, data, sessionPath);
+    }
+    function activeGuestSession(documentId, data, sessionPath) {
+      let session = get(sessionPath);
+      let publicationPath = /databases/$(database)/documents/pdkPublications/$(session.data.token);
+      return exists(publicationPath) && activeGuestPublication(documentId, data, session, publicationPath);
+    }
+    function activeGuestPublication(documentId, data, session, publicationPath) {
+      let publication = get(publicationPath);
+      return session.data.principalId == request.auth.uid &&
+        publication.data.documentId == documentId && publication.data.kind == 'editor' &&
+        data.publicationTokens.editor == session.data.token;
+    }
+    function editor(data) {
+      return member(data) && data.roles[request.auth.uid] in ['owner', 'editor'];
+    }
+    function owner(data) {
+      return verified() && data.ownerId == request.auth.uid && data.roles[request.auth.uid] == 'owner';
+    }
+    function validEnvelope(data) {
+      return data.schemaVersion == 1 && data.documentType is string &&
+        data.documentSchemaVersion is int && data.documentSchemaVersion > 0 &&
+        data.revision is int && data.revision > 0 &&
+        data.memberIds is list && data.memberIds.size() <= 20 &&
+        data.roles is map && data.recentCommandIds is list && data.recentCommandIds.size() <= 50 &&
+        data.checkpointRevisions is list && data.checkpointRevisions.size() <= 25 &&
+        data.publicationTokens is map &&
+        data.lastTargets is list && data.lastTargets.size() <= 20;
+    }
+    function validInviteJoin(documentId) {
+      let token = request.resource.data.get('lastAcceptedToken', '');
+      let publication = get(/databases/$(database)/documents/pdkPublications/$(token));
+      return signedIn() && !anonymous() &&
+        publication.data.documentId == documentId && publication.data.kind == 'editor' &&
+        resource.data.publicationTokens.editor == token &&
+        !(request.auth.uid in resource.data.memberIds) &&
+        request.auth.uid in request.resource.data.memberIds &&
+        request.resource.data.memberIds.size() == resource.data.memberIds.size() + 1 &&
+        request.resource.data.memberIds.size() <= 20 &&
+        request.resource.data.roles[request.auth.uid] == 'editor' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'memberIds', 'roles', 'lastAcceptedToken', 'updatedAt', 'updatedBy'
+        ]) && request.resource.data.updatedBy == request.auth.uid;
+    }
+    function validOwnerUpdate() {
+      return owner(resource.data) && request.resource.data.memberIds.size() <= 20 &&
+        request.resource.data.ownerId in request.resource.data.memberIds &&
+        request.resource.data.roles.size() == request.resource.data.memberIds.size() &&
+        request.resource.data.roles[request.resource.data.ownerId] == 'owner' &&
+        (request.resource.data.ownerId == resource.data.ownerId ||
+          (resource.data.roles[request.resource.data.ownerId] == 'editor' &&
+            request.resource.data.roles[resource.data.ownerId] == 'editor')) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'ownerId', 'memberIds', 'roles', 'publicationTokens', 'updatedAt', 'updatedBy'
+        ]);
+    }
+    function validSelfRemoval() {
+      return member(resource.data) && resource.data.ownerId != request.auth.uid &&
+        !(request.auth.uid in request.resource.data.memberIds) &&
+        request.resource.data.memberIds.size() == resource.data.memberIds.size() - 1 &&
+        request.resource.data.roles.diff(resource.data.roles).affectedKeys().hasOnly([request.auth.uid]) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'memberIds', 'roles', 'updatedAt', 'updatedBy'
+        ]);
+    }
+
+    match /pdkDocuments/{documentId} {
+      allow get: if !exists(/databases/$(database)/documents/pdkDocuments/$(documentId)) ||
+        member(resource.data) || activeGuest(documentId, resource.data);
+      allow list: if member(resource.data);
+      allow create: if verified() && validEnvelope(request.resource.data) &&
+        request.resource.data.ownerId == request.auth.uid &&
+        request.resource.data.memberIds == [request.auth.uid] &&
+        request.resource.data.roles[request.auth.uid] == 'owner' &&
+        request.resource.data.revision == 1;
+      allow update: if validEnvelope(request.resource.data) && (
+        ((editor(resource.data) || activeGuest(documentId, resource.data)) && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'state', 'summary', 'documentSchemaVersion', 'revision', 'recentCommandIds',
+          'checkpointRevisions', 'lastTargets', 'updatedAt', 'updatedBy'
+        ]) && request.resource.data.revision == resource.data.revision + 1) ||
+        validOwnerUpdate() || validInviteJoin(documentId) || validSelfRemoval()
+      );
+      allow delete: if owner(resource.data);
+
+      match /checkpoints/{revision} {
+        allow read: if member(get(/databases/$(database)/documents/pdkDocuments/$(documentId)).data) ||
+          activeGuest(documentId, get(/databases/$(database)/documents/pdkDocuments/$(documentId)).data);
+        allow create: if (editor(getAfter(/databases/$(database)/documents/pdkDocuments/$(documentId)).data) ||
+          activeGuest(documentId, getAfter(/databases/$(database)/documents/pdkDocuments/$(documentId)).data)) &&
+          request.resource.data.schemaVersion == 1 && request.resource.data.revision is int;
+        allow update: if false;
+        allow delete: if owner(get(/databases/$(database)/documents/pdkDocuments/$(documentId)).data);
+      }
+
+      match /presence/{sessionId} {
+        allow read: if member(get(/databases/$(database)/documents/pdkDocuments/$(documentId)).data) ||
+          activeGuest(documentId, get(/databases/$(database)/documents/pdkDocuments/$(documentId)).data);
+        allow create, update: if (editor(get(/databases/$(database)/documents/pdkDocuments/$(documentId)).data) ||
+          activeGuest(documentId, get(/databases/$(database)/documents/pdkDocuments/$(documentId)).data)) &&
+          request.resource.data.principalId == request.auth.uid;
+        allow delete: if signedIn() &&
+          (resource.data.principalId == request.auth.uid ||
+            owner(get(/databases/$(database)/documents/pdkDocuments/$(documentId)).data));
+      }
+
+      match /editorSessions/{principalId} {
+        allow get: if signedIn() && (request.auth.uid == principalId || owner(get(/databases/$(database)/documents/pdkDocuments/$(documentId)).data));
+        allow list, delete: if owner(get(/databases/$(database)/documents/pdkDocuments/$(documentId)).data);
+        allow create, update: if signedIn() && request.auth.uid == principalId &&
+          anonymous() &&
+          request.resource.data.principalId == request.auth.uid &&
+          get(/databases/$(database)/documents/pdkPublications/$(request.resource.data.token)).data.documentId == documentId &&
+          get(/databases/$(database)/documents/pdkPublications/$(request.resource.data.token)).data.kind == 'editor' &&
+          get(/databases/$(database)/documents/pdkDocuments/$(documentId)).data.publicationTokens.editor == request.resource.data.token;
+      }
+    }
+
+    match /pdkPublications/{token} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if owner(get(/databases/$(database)/documents/pdkDocuments/$(request.resource.data.documentId)).data);
+      allow update: if request.resource.data.documentId == resource.data.documentId &&
+        request.resource.data.kind == resource.data.kind &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'state', 'summary', 'documentSchemaVersion', 'revision', 'kind', 'updatedAt'
+        ]) && (editor(getAfter(/databases/$(database)/documents/pdkDocuments/$(resource.data.documentId)).data) ||
+          activeGuest(resource.data.documentId, getAfter(/databases/$(database)/documents/pdkDocuments/$(resource.data.documentId)).data));
+      allow delete: if owner(get(/databases/$(database)/documents/pdkDocuments/$(resource.data.documentId)).data);
+    }
+  }
+}

@@ -1,0 +1,15 @@
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; background: #eef2f7; color: #18212f; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { width: min(900px, calc(100% - 2rem)); margin: 2rem auto; }
+header, nav { display: flex; gap: .75rem; margin-bottom: 1rem; }
+header input { flex: 1; font-size: 1.5rem; font-weight: 700; }
+button, input, textarea { font: inherit; padding: .55rem .7rem; }
+.notes { display: grid; gap: .75rem; }
+.node { position: relative; padding: 1rem; border: 1px solid #aab4c3; border-radius: .6rem; background: white; }
+.node textarea, .node > input { width: 100%; }
+.children { display: grid; gap: .5rem; margin: .75rem 0 0 1.25rem; }
+.field label { display: grid; grid-template-columns: 1fr 2fr; gap: .5rem; margin-right: 5rem; }
+.node-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .6rem; }
+.delete { color: #b42318; margin-left: auto; }
+@media (prefers-color-scheme: dark) { :root { background: #111827; color: #e5e7eb; } .node { background: #1f2937; border-color: #4b5563; } }

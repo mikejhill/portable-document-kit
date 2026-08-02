@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "baseUrl": ".",
+    "paths": {
+      "@mikejhill/portable-document-core": ["packages/core/src/index.ts"],
+      "@mikejhill/portable-document-codec": ["packages/codec/src/index.ts"],
+      "@mikejhill/portable-document-browser": ["packages/browser/src/index.ts"],
+      "@mikejhill/portable-document-indexeddb": ["packages/indexeddb/src/index.ts"],
+      "@mikejhill/portable-document-sync": ["packages/sync/src/index.ts"],
+      "@mikejhill/portable-document-firebase": ["packages/firebase/src/index.ts"],
+      "@mikejhill/portable-document-react": ["packages/react/src/index.ts"],
+      "@mikejhill/portable-document-testing": ["packages/testing/src/index.ts"]
+    }
+  }
+}
