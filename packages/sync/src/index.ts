@@ -11,13 +11,7 @@ import {
 } from "@mikejhill/portable-document-core";
 
 export type ReplicationStatus =
-  | "clean"
-  | "staging"
-  | "pending"
-  | "syncing"
-  | "offline"
-  | "conflict"
-  | "unavailable";
+  "clean" | "staging" | "pending" | "syncing" | "offline" | "conflict" | "unavailable";
 
 export type ReplicationConflict<Command> = {
   readonly envelope: CommandEnvelope<Command>;
@@ -33,13 +27,24 @@ export type ReplicationState<State, Command, Summary> = {
   readonly conflict?: ReplicationConflict<Command>;
 };
 
+/** Replaceable replication contract implemented by OCC, CRDT, OT, or server engines. */
 export interface ReplicationEngine<State, Command, Summary> {
+  /** Returns the immutable current replication view. */
   getSnapshot(): ReplicationState<State, Command, Summary>;
+  /** Subscribes to state transitions and returns an idempotent disposer. */
   subscribe(listener: () => void): () => void;
-  dispatch(command: Command, options?: { readonly checkpointReason?: string; readonly actorId?: string }): Promise<DocumentFailure | null>;
+  /** Validates, applies, and durably stages a command before resolving. */
+  dispatch(
+    command: Command,
+    options?: { readonly checkpointReason?: string; readonly actorId?: string },
+  ): Promise<DocumentFailure | null>;
+  /** Accepts a remote head without allowing stale revisions to regress visible state. */
   receiveRemote(snapshot: DocumentSnapshot<State, Summary>): Promise<void>;
+  /** Restores durable pending commands after process or page restart. */
   restorePending(): Promise<void>;
+  /** Serially commits all currently pending commands until blocked or conflicted. */
   flush(): Promise<void>;
+  /** Stops timers and prevents further staging or network work. */
   dispose(): void;
 }
 
@@ -52,8 +57,11 @@ export type OccReplicationOptions = {
 };
 
 /** Durable revisioned OCC with optimistic overlays and stale-snapshot defense. */
-export class OccReplicationEngine<State, Command, Summary>
-implements ReplicationEngine<State, Command, Summary> {
+export class OccReplicationEngine<State, Command, Summary> implements ReplicationEngine<
+  State,
+  Command,
+  Summary
+> {
   private readonly listeners = new Set<() => void>();
   private readonly now: () => number;
   private readonly createId: () => string;
@@ -64,6 +72,7 @@ implements ReplicationEngine<State, Command, Summary> {
   private queue: OutboxRecord<Command>[] = [];
   private inFlight: OutboxRecord<Command> | null = null;
   private flushPromise: Promise<void> | null = null;
+  private stagingTail: Promise<void> = Promise.resolve();
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private maxTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
@@ -76,14 +85,17 @@ implements ReplicationEngine<State, Command, Summary> {
     options: OccReplicationOptions = {},
   ) {
     this.now = options.now ?? Date.now;
-    this.createId = options.createId ?? (() =>
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
+    this.createId =
+      options.createId ??
+      (() =>
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
     this.idleDelayMs = options.idleDelayMs ?? 1_500;
     this.maxDelayMs = options.maxDelayMs ?? 5_000;
-    this.classifyFailure = options.classifyFailure ?? (() =>
-      typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "unavailable");
+    this.classifyFailure =
+      options.classifyFailure ??
+      (() => (typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "unavailable"));
     this.state = { status: "clean", head: initial, visible: initial, pending: [] };
   }
 
@@ -98,7 +110,15 @@ implements ReplicationEngine<State, Command, Summary> {
     command: Command,
     options: { readonly checkpointReason?: string; readonly actorId?: string } = {},
   ): Promise<DocumentFailure | null> {
-    if (this.disposed) return { code: "failed-precondition", message: "Replication engine is disposed." };
+    return this.serializeStaging(() => this.stageCommand(command, options));
+  }
+
+  private async stageCommand(
+    command: Command,
+    options: { readonly checkpointReason?: string; readonly actorId?: string },
+  ): Promise<DocumentFailure | null> {
+    if (this.disposed)
+      return { code: "failed-precondition", message: "Replication engine is disposed." };
     const application = applyDocumentCommand(this.definition, this.state.visible.state, command);
     if (!application.ok) return application.failure;
     const policy = this.definition.commandPolicy.inspect(command);
@@ -117,28 +137,43 @@ implements ReplicationEngine<State, Command, Summary> {
       coalescingKey: policy.coalescingKey,
       stagedAt: this.now(),
     };
-    const previousIndex = policy.durability === "coalesced" && policy.coalescingKey
-      ? this.queue.findIndex((candidate) => candidate.coalescingKey === policy.coalescingKey)
-      : -1;
+    const previousIndex =
+      policy.durability === "coalesced" && policy.coalescingKey
+        ? this.queue.findIndex((candidate) => candidate.coalescingKey === policy.coalescingKey)
+        : -1;
+    const stableState = this.state;
     this.setState({
       ...this.state,
       status: "staging",
       visible: this.withState(this.state.visible, application.state, envelope.issuedAt),
     });
-    if (previousIndex >= 0 && this.definition.commandPolicy.coalesce) {
-      const previous = this.queue[previousIndex]!;
-      const combined = this.definition.commandPolicy.coalesce(previous.envelope.command, command);
-      if (combined) {
-        record = { ...record, envelope: { ...envelope, command: combined } };
-        await this.outbox.replace(previous.envelope.id, record);
-        this.queue.splice(previousIndex, 1, record);
+    try {
+      if (previousIndex >= 0 && this.definition.commandPolicy.coalesce) {
+        const previous = this.queue[previousIndex]!;
+        const combined = this.definition.commandPolicy.coalesce(previous.envelope.command, command);
+        if (combined) {
+          record = { ...record, envelope: { ...envelope, command: combined } };
+          await this.outbox.replace(previous.envelope.id, record);
+          this.queue.splice(previousIndex, 1, record);
+        } else {
+          await this.outbox.put(record);
+          this.queue.push(record);
+        }
       } else {
         await this.outbox.put(record);
         this.queue.push(record);
       }
-    } else {
-      await this.outbox.put(record);
-      this.queue.push(record);
+    } catch (error) {
+      this.setState({
+        ...stableState,
+        status: this.classifyFailure(error),
+        pending: [...this.queue],
+      });
+      return {
+        code: "failed-precondition",
+        message: "The command could not be stored durably.",
+        recoverable: command,
+      };
     }
     this.publishPending("pending");
     if (policy.durability === "immediate") void this.flush();
@@ -148,7 +183,7 @@ implements ReplicationEngine<State, Command, Summary> {
 
   public async restorePending(): Promise<void> {
     if (this.disposed) return;
-    this.queue = [...await this.outbox.list(this.state.head.id)];
+    this.queue = [...(await this.outbox.list(this.state.head.id))];
     this.rebaseVisible();
     if (this.queue.length) {
       this.publishPending("pending");
@@ -157,7 +192,12 @@ implements ReplicationEngine<State, Command, Summary> {
   }
 
   public async receiveRemote(snapshot: DocumentSnapshot<State, Summary>): Promise<void> {
-    if (this.disposed || snapshot.id !== this.state.head.id || snapshot.revision < this.state.head.revision) return;
+    if (
+      this.disposed ||
+      snapshot.id !== this.state.head.id ||
+      snapshot.revision < this.state.head.revision
+    )
+      return;
     const acknowledged = new Set(snapshot.appliedCommandIds);
     const removed = this.queue.filter((record) => acknowledged.has(record.envelope.id));
     this.queue = this.queue.filter((record) => !acknowledged.has(record.envelope.id));
@@ -220,6 +260,21 @@ implements ReplicationEngine<State, Command, Summary> {
     this.publishPending("clean");
   }
 
+  /** Serializes durable outbox mutations so command order cannot follow I/O completion order. */
+  private async serializeStaging<Result>(operation: () => Promise<Result>): Promise<Result> {
+    const previous = this.stagingTail;
+    let release = (): void => undefined;
+    this.stagingTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
   private rebaseVisible(): void {
     let visible = this.state.head;
     for (const record of this.queue) {
@@ -243,7 +298,11 @@ implements ReplicationEngine<State, Command, Summary> {
     this.state = { ...this.state, visible };
   }
 
-  private withState(snapshot: DocumentSnapshot<State, Summary>, state: State, updatedAt: number): DocumentSnapshot<State, Summary> {
+  private withState(
+    snapshot: DocumentSnapshot<State, Summary>,
+    state: State,
+    updatedAt: number,
+  ): DocumentSnapshot<State, Summary> {
     return { ...snapshot, state, summary: this.definition.summarize(state), updatedAt };
   }
 

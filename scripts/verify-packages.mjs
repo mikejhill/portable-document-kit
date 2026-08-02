@@ -19,11 +19,17 @@ try {
   for (const entry of await readdir(temporary)) {
     if (entry.endsWith(".tgz")) tarballs.push(join(temporary, entry));
   }
-  if (tarballs.length !== 8) throw new Error(`Expected 8 publishable packages; found ${tarballs.length}.`);
+  if (tarballs.length !== 8)
+    throw new Error(`Expected 8 publishable packages; found ${tarballs.length}.`);
 
-  await writeFile(join(temporary, "package.json"), JSON.stringify({ name: "pdk-install-verification", private: true, type: "module" }));
+  await writeFile(
+    join(temporary, "package.json"),
+    JSON.stringify({ name: "pdk-install-verification", private: true, type: "module" }),
+  );
   runNpm(["install", "--ignore-scripts", "--no-audit", "--no-fund", ...tarballs], temporary);
-  await writeFile(join(temporary, "verify.mjs"), `
+  await writeFile(
+    join(temporary, "verify.mjs"),
+    `
     import { defineDocument } from "@mikejhill/portable-document-core";
     import { PortableSnapshotCodec } from "@mikejhill/portable-document-codec";
     await Promise.all([
@@ -35,7 +41,8 @@ try {
       import("@mikejhill/portable-document-testing"),
     ]);
     if (typeof defineDocument !== "function" || typeof PortableSnapshotCodec !== "function") process.exit(1);
-  `);
+  `,
+  );
   run("node", ["verify.mjs"], temporary);
   console.log("Verified 8 packed packages in an isolated consumer.");
 } finally {

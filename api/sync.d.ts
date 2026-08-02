@@ -13,16 +13,24 @@ type ReplicationState<State, Command, Summary> = {
     readonly pending: readonly OutboxRecord<Command>[];
     readonly conflict?: ReplicationConflict<Command>;
 };
+/** Replaceable replication contract implemented by OCC, CRDT, OT, or server engines. */
 interface ReplicationEngine<State, Command, Summary> {
+    /** Returns the immutable current replication view. */
     getSnapshot(): ReplicationState<State, Command, Summary>;
+    /** Subscribes to state transitions and returns an idempotent disposer. */
     subscribe(listener: () => void): () => void;
+    /** Validates, applies, and durably stages a command before resolving. */
     dispatch(command: Command, options?: {
         readonly checkpointReason?: string;
         readonly actorId?: string;
     }): Promise<DocumentFailure | null>;
+    /** Accepts a remote head without allowing stale revisions to regress visible state. */
     receiveRemote(snapshot: DocumentSnapshot<State, Summary>): Promise<void>;
+    /** Restores durable pending commands after process or page restart. */
     restorePending(): Promise<void>;
+    /** Serially commits all currently pending commands until blocked or conflicted. */
     flush(): Promise<void>;
+    /** Stops timers and prevents further staging or network work. */
     dispose(): void;
 }
 type OccReplicationOptions = {
@@ -47,6 +55,7 @@ declare class OccReplicationEngine<State, Command, Summary> implements Replicati
     private queue;
     private inFlight;
     private flushPromise;
+    private stagingTail;
     private idleTimer;
     private maxTimer;
     private disposed;
@@ -57,11 +66,14 @@ declare class OccReplicationEngine<State, Command, Summary> implements Replicati
         readonly checkpointReason?: string;
         readonly actorId?: string;
     }): Promise<DocumentFailure | null>;
+    private stageCommand;
     restorePending(): Promise<void>;
     receiveRemote(snapshot: DocumentSnapshot<State, Summary>): Promise<void>;
     flush(): Promise<void>;
     dispose(): void;
     private flushQueue;
+    /** Serializes durable outbox mutations so command order cannot follow I/O completion order. */
+    private serializeStaging;
     private rebaseVisible;
     private withState;
     private publishPending;

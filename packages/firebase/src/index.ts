@@ -95,7 +95,9 @@ export class FirebaseIdentity {
   public constructor(private readonly runtime: FirebaseRuntime) {}
 
   public subscribe(listener: (principal: FirebasePrincipal | null) => void): Unsubscribe {
-    return onAuthStateChanged(this.runtime.auth(), (user) => listener(user ? toPrincipal(user) : null));
+    return onAuthStateChanged(this.runtime.auth(), (user) =>
+      listener(user ? toPrincipal(user) : null),
+    );
   }
 
   public async ensureAnonymous(): Promise<FirebasePrincipal> {
@@ -159,11 +161,29 @@ export type FirebaseDocumentStoreOptions = {
 
 /** Fixed-schema Firestore adapter for content, sharing, membership, and presence. */
 export class FirebaseDocumentStore<State, Command, Summary>
-implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommitStore<State, Command, Summary>, RevisionHistoryStore<State>, DocumentSubscription<State, Summary>, PublicationStore<State, Summary>, MembershipStore, PresenceStore {
+  implements
+    SnapshotStore<State, Summary>,
+    DocumentCatalog<Summary>,
+    CommandCommitStore<State, Command, Summary>,
+    RevisionHistoryStore<State>,
+    DocumentSubscription<State, Summary>,
+    PublicationStore<State, Summary>,
+    MembershipStore,
+    PresenceStore
+{
   public readonly manifest: CapabilityManifest = {
     adapter: "firebase-firestore",
     integrity: "envelope-enforced",
-    capabilities: new Set(["snapshot", "catalog", "commands", "history", "subscription", "publication", "membership", "presence"]),
+    capabilities: new Set([
+      "snapshot",
+      "catalog",
+      "commands",
+      "history",
+      "subscription",
+      "publication",
+      "membership",
+      "presence",
+    ]),
   };
   private readonly now: () => number;
   private readonly createToken: () => string;
@@ -182,13 +202,22 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
     return snapshot.exists() ? this.parseDocument(id, snapshot.data() as CloudDocument) : null;
   }
 
-  public async list(): Promise<ReadonlyArray<Pick<DocumentSnapshot<unknown, Summary>, "id" | "documentType" | "summary" | "revision" | "createdAt" | "updatedAt">>> {
+  public async list(): Promise<
+    ReadonlyArray<
+      Pick<
+        DocumentSnapshot<unknown, Summary>,
+        "id" | "documentType" | "summary" | "revision" | "createdAt" | "updatedAt"
+      >
+    >
+  > {
     const principal = this.requirePrincipal();
-    const snapshots = await getDocs(query(
-      collection(this.database, DOCUMENTS),
-      where("memberIds", "array-contains", principal.id),
-      orderBy("updatedAt", "desc"),
-    ));
+    const snapshots = await getDocs(
+      query(
+        collection(this.database, DOCUMENTS),
+        where("memberIds", "array-contains", principal.id),
+        orderBy("updatedAt", "desc"),
+      ),
+    );
     return snapshots.docs.map((snapshot) => {
       const parsed = this.parseDocument(snapshot.id, snapshot.data() as CloudDocument);
       return {
@@ -204,7 +233,11 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
 
   public async create(id: string, state: State): Promise<DocumentSnapshot<State, Summary>> {
     const principal = this.requireVerifiedPrincipal();
-    const parsed = migrateDocumentState(this.definition, state, this.definition.currentSchemaVersion);
+    const parsed = migrateDocumentState(
+      this.definition,
+      state,
+      this.definition.currentSchemaVersion,
+    );
     if (!parsed.ok) throw new Error("Cannot store invalid document state.");
     this.assertPayloadSize(parsed.state);
     const reference = doc(this.database, DOCUMENTS, id);
@@ -240,15 +273,24 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
     return this.requireLoad(id);
   }
 
-  public async replace(id: string, state: State, expectedRevision: number): Promise<DocumentSnapshot<State, Summary>> {
+  public async replace(
+    id: string,
+    state: State,
+    expectedRevision: number,
+  ): Promise<DocumentSnapshot<State, Summary>> {
     const principal = this.requirePrincipal();
-    const parsed = migrateDocumentState(this.definition, state, this.definition.currentSchemaVersion);
+    const parsed = migrateDocumentState(
+      this.definition,
+      state,
+      this.definition.currentSchemaVersion,
+    );
     if (!parsed.ok) throw new Error("Cannot store invalid document state.");
     this.assertPayloadSize(parsed.state);
     const reference = doc(this.database, DOCUMENTS, id);
     await runTransaction(this.database, async (transaction) => {
       const snapshot = await transaction.get(reference);
-      if (!snapshot.exists() || snapshot.data().revision !== expectedRevision) throw new Error("Document revision changed.");
+      if (!snapshot.exists() || snapshot.data().revision !== expectedRevision)
+        throw new Error("Document revision changed.");
       transaction.update(reference, {
         state: parsed.state,
         summary: this.definition.summarize(parsed.state),
@@ -265,7 +307,8 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
   public async delete(id: string): Promise<void> {
     const principal = this.requirePrincipal();
     const current = await this.requireCloudDocument(id);
-    if (current.ownerId !== principal.id) throw new Error("Only the owner can delete this document.");
+    if (current.ownerId !== principal.id)
+      throw new Error("Only the owner can delete this document.");
     const batch = writeBatch(this.database);
     for (const name of ["checkpoints", "presence", "editorSessions"]) {
       const children = await getDocs(collection(this.database, DOCUMENTS, id, name));
@@ -278,96 +321,114 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
     await batch.commit();
   }
 
-  public async commit(envelope: CommandEnvelope<Command>, checkpointReason?: string): Promise<CommitResult<State, Summary>> {
+  public async commit(
+    envelope: CommandEnvelope<Command>,
+    checkpointReason?: string,
+  ): Promise<CommitResult<State, Summary>> {
     const principal = this.requirePrincipal();
     if (envelope.documentType !== this.definition.type) {
-      return { ok: false, failure: { code: "failed-precondition", message: "Wrong document type." } };
+      return {
+        ok: false,
+        failure: { code: "failed-precondition", message: "Wrong document type." },
+      };
     }
     const reference = doc(this.database, DOCUMENTS, envelope.documentId);
     let rejected: CommitResult<State, Summary> | null = null;
-    try {
-      await runTransaction(this.database, async (transaction) => {
-        const cloudSnapshot = await transaction.get(reference);
-        if (!cloudSnapshot.exists()) {
-          rejected = { ok: false, failure: { code: "missing-target", message: "Document no longer exists." } };
-          return;
-        }
-        const record = cloudSnapshot.data() as CloudDocument;
-        const current = this.parseDocument(envelope.documentId, record);
-        if (record.recentCommandIds.includes(envelope.id)) return;
-        const application = applyDocumentCommand(this.definition, current.state, envelope.command);
-        if (!application.ok) {
-          rejected = { ok: false, failure: application.failure, latest: current };
-          return;
-        }
-        const metadata = this.definition.commandPolicy.inspect(envelope.command);
-        const conflict = assessRevisionConflict(
-          envelope.baseRevision,
-          current.revision,
-          metadata.targets,
-          current.lastTargets,
-          metadata.conflictLabel,
-        );
-        if (conflict) {
-          rejected = { ok: false, failure: conflict, latest: current };
-          return;
-        }
-        this.assertPayloadSize(application.state);
-        const revision = record.revision + 1;
-        const checkpointRevisions = checkpointReason
-          ? [...record.checkpointRevisions, revision].slice(-MAX_CHECKPOINTS)
-          : record.checkpointRevisions;
-        transaction.update(reference, {
+    await runTransaction(this.database, async (transaction) => {
+      const cloudSnapshot = await transaction.get(reference);
+      if (!cloudSnapshot.exists()) {
+        rejected = {
+          ok: false,
+          failure: { code: "missing-target", message: "Document no longer exists." },
+        };
+        return;
+      }
+      const record = cloudSnapshot.data() as CloudDocument;
+      const current = this.parseDocument(envelope.documentId, record);
+      if (record.recentCommandIds.includes(envelope.id)) return;
+      const application = applyDocumentCommand(this.definition, current.state, envelope.command);
+      if (!application.ok) {
+        rejected = { ok: false, failure: application.failure, latest: current };
+        return;
+      }
+      const metadata = this.definition.commandPolicy.inspect(envelope.command);
+      const conflict = assessRevisionConflict(
+        envelope.baseRevision,
+        current.revision,
+        metadata.targets,
+        current.lastTargets,
+        metadata.conflictLabel,
+      );
+      if (conflict) {
+        rejected = { ok: false, failure: conflict, latest: current };
+        return;
+      }
+      this.assertPayloadSize(application.state);
+      const revision = record.revision + 1;
+      const checkpointRevisions = checkpointReason
+        ? [...record.checkpointRevisions, revision].slice(-MAX_CHECKPOINTS)
+        : record.checkpointRevisions;
+      transaction.update(reference, {
+        state: application.state,
+        summary: this.definition.summarize(application.state),
+        documentSchemaVersion: this.definition.currentSchemaVersion,
+        revision,
+        recentCommandIds: [...record.recentCommandIds, envelope.id].slice(-MAX_RECENT_COMMANDS),
+        checkpointRevisions,
+        lastTargets: metadata.targets,
+        updatedAt: serverTimestamp(),
+        updatedBy: principal.id,
+      });
+      for (const [kind, token] of Object.entries(record.publicationTokens)) {
+        if (!token) continue;
+        transaction.update(doc(this.database, PUBLICATIONS, token), {
           state: application.state,
           summary: this.definition.summarize(application.state),
           documentSchemaVersion: this.definition.currentSchemaVersion,
           revision,
-          recentCommandIds: [...record.recentCommandIds, envelope.id].slice(-MAX_RECENT_COMMANDS),
-          checkpointRevisions,
-          lastTargets: metadata.targets,
+          kind,
           updatedAt: serverTimestamp(),
-          updatedBy: principal.id,
         });
-        for (const [kind, token] of Object.entries(record.publicationTokens)) {
-          if (!token) continue;
-          transaction.update(doc(this.database, PUBLICATIONS, token), {
-            state: application.state,
-            summary: this.definition.summarize(application.state),
-            documentSchemaVersion: this.definition.currentSchemaVersion,
-            revision,
-            kind,
-            updatedAt: serverTimestamp(),
-          });
-        }
-        if (checkpointReason) {
-          transaction.set(doc(reference, "checkpoints", String(revision)), {
-            schemaVersion: 1,
-            documentSchemaVersion: this.definition.currentSchemaVersion,
-            state: application.state,
-            revision,
-            reason: checkpointReason,
-            createdAt: serverTimestamp(),
-          } satisfies CloudCheckpoint);
-        }
-      });
-    } catch (error) {
-      throw error;
-    }
+      }
+      if (checkpointReason) {
+        transaction.set(doc(reference, "checkpoints", String(revision)), {
+          schemaVersion: 1,
+          documentSchemaVersion: this.definition.currentSchemaVersion,
+          state: application.state,
+          revision,
+          reason: checkpointReason,
+          createdAt: serverTimestamp(),
+        } satisfies CloudCheckpoint);
+      }
+    });
     if (rejected) return rejected;
     return { ok: true, snapshot: await this.requireLoad(envelope.documentId) };
   }
 
-  public subscribe(documentId: string, listener: (snapshot: DocumentSnapshot<State, Summary>) => void): Unsubscribe {
+  public subscribe(
+    documentId: string,
+    listener: (snapshot: DocumentSnapshot<State, Summary>) => void,
+  ): Unsubscribe {
     return onSnapshot(doc(this.database, DOCUMENTS, documentId), (snapshot) => {
-      if (snapshot.exists()) listener(this.parseDocument(snapshot.id, snapshot.data() as CloudDocument));
+      if (snapshot.exists())
+        listener(this.parseDocument(snapshot.id, snapshot.data() as CloudDocument));
     });
   }
 
   public async listCheckpoints(documentId: string): Promise<readonly DocumentCheckpoint<State>[]> {
-    const snapshots = await getDocs(query(collection(this.database, DOCUMENTS, documentId, "checkpoints"), orderBy("revision", "desc")));
+    const snapshots = await getDocs(
+      query(
+        collection(this.database, DOCUMENTS, documentId, "checkpoints"),
+        orderBy("revision", "desc"),
+      ),
+    );
     return snapshots.docs.map((snapshot) => {
       const record = snapshot.data() as CloudCheckpoint;
-      const migrated = migrateDocumentState(this.definition, record.state, record.documentSchemaVersion);
+      const migrated = migrateDocumentState(
+        this.definition,
+        record.state,
+        record.documentSchemaVersion,
+      );
       if (!migrated.ok) throw new Error("Cloud checkpoint is invalid.");
       return {
         documentId,
@@ -381,10 +442,16 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
   }
 
   public async restore(documentId: string, revision: number): Promise<DocumentCheckpoint<State>> {
-    const snapshot = await getDoc(doc(this.database, DOCUMENTS, documentId, "checkpoints", String(revision)));
+    const snapshot = await getDoc(
+      doc(this.database, DOCUMENTS, documentId, "checkpoints", String(revision)),
+    );
     if (!snapshot.exists()) throw new Error("Checkpoint no longer exists.");
     const record = snapshot.data() as CloudCheckpoint;
-    const migrated = migrateDocumentState(this.definition, record.state, record.documentSchemaVersion);
+    const migrated = migrateDocumentState(
+      this.definition,
+      record.state,
+      record.documentSchemaVersion,
+    );
     if (!migrated.ok) throw new Error("Cloud checkpoint is invalid.");
     return {
       documentId,
@@ -396,7 +463,11 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
     };
   }
 
-  public async publish(documentId: string, kind: PublicationKind, rotate = false): Promise<Publication> {
+  public async publish(
+    documentId: string,
+    kind: PublicationKind,
+    rotate = false,
+  ): Promise<Publication> {
     const principal = this.requirePrincipal();
     const cloud = await this.requireCloudDocument(documentId);
     if (cloud.ownerId !== principal.id) throw new Error("Only the owner can manage publications.");
@@ -421,7 +492,8 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
         updatedAt: serverTimestamp(),
         updatedBy: principal.id,
       });
-      if (rotate && existingToken) transaction.delete(doc(this.database, PUBLICATIONS, existingToken));
+      if (rotate && existingToken)
+        transaction.delete(doc(this.database, PUBLICATIONS, existingToken));
     });
     return { token, documentId, kind, revision: snapshot.revision };
   }
@@ -444,15 +516,28 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
     await batch.commit();
   }
 
-  public async resolve(token: string): Promise<{ readonly publication: Publication; readonly snapshot: DocumentSnapshot<State, Summary> } | null> {
+  public async resolve(token: string): Promise<{
+    readonly publication: Publication;
+    readonly snapshot: DocumentSnapshot<State, Summary>;
+  } | null> {
     const snapshot = await getDoc(doc(this.database, PUBLICATIONS, token));
     if (!snapshot.exists()) return null;
     const record = snapshot.data() as CloudPublication;
-    const migrated = migrateDocumentState(this.definition, record.state, record.documentSchemaVersion);
-    if (!migrated.ok || record.documentType !== this.definition.type) throw new Error("Published document is invalid.");
+    const migrated = migrateDocumentState(
+      this.definition,
+      record.state,
+      record.documentSchemaVersion,
+    );
+    if (!migrated.ok || record.documentType !== this.definition.type)
+      throw new Error("Published document is invalid.");
     const time = timestampMilliseconds(record.updatedAt);
     return {
-      publication: { token, documentId: record.documentId, kind: record.kind, revision: record.revision },
+      publication: {
+        token,
+        documentId: record.documentId,
+        kind: record.kind,
+        revision: record.revision,
+      },
       snapshot: {
         id: record.documentId,
         documentType: record.documentType,
@@ -470,7 +555,10 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
 
   public async listMembers(documentId: string): Promise<readonly Member[]> {
     const record = await this.requireCloudDocument(documentId);
-    return record.memberIds.map((principalId) => ({ principalId, role: record.roles[principalId] ?? "viewer" }));
+    return record.memberIds.map((principalId) => ({
+      principalId,
+      role: record.roles[principalId] ?? "viewer",
+    }));
   }
 
   /** Converts an editor bearer token into a revocable guest session or durable account membership. */
@@ -481,12 +569,15 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
     const publication = publicationSnapshot.data() as CloudPublication;
     if (publication.kind !== "editor") throw new Error("The token is not an editor invitation.");
     if (principal.anonymous) {
-      await setDoc(doc(this.database, DOCUMENTS, publication.documentId, "editorSessions", principal.id), {
-        schemaVersion: 1,
-        token,
-        principalId: principal.id,
-        createdAt: serverTimestamp(),
-      });
+      await setDoc(
+        doc(this.database, DOCUMENTS, publication.documentId, "editorSessions", principal.id),
+        {
+          schemaVersion: 1,
+          token,
+          principalId: principal.id,
+          createdAt: serverTimestamp(),
+        },
+      );
       return publication.documentId;
     }
     const reference = doc(this.database, DOCUMENTS, publication.documentId);
@@ -536,8 +627,10 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
       const snapshot = await transaction.get(reference);
       if (!snapshot.exists()) throw new Error("Document no longer exists.");
       const record = snapshot.data() as CloudDocument;
-      if (record.ownerId !== principal.id && principal.id !== principalId) throw new Error("Member removal is not permitted.");
-      if (record.ownerId === principalId) throw new Error("Transfer ownership before removing the owner.");
+      if (record.ownerId !== principal.id && principal.id !== principalId)
+        throw new Error("Member removal is not permitted.");
+      if (record.ownerId === principalId)
+        throw new Error("Transfer ownership before removing the owner.");
       const roles = { ...record.roles };
       delete roles[principalId];
       transaction.update(reference, {
@@ -581,17 +674,25 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
     await deleteDoc(doc(this.database, DOCUMENTS, documentId, "presence", sessionId));
   }
 
-  public subscribePresence(documentId: string, listener: (presence: readonly Presence[]) => void): Unsubscribe {
+  public subscribePresence(
+    documentId: string,
+    listener: (presence: readonly Presence[]) => void,
+  ): Unsubscribe {
     return onSnapshot(collection(this.database, DOCUMENTS, documentId, "presence"), (snapshot) => {
-      listener(activePresence(snapshot.docs.map((entry) => {
-        const value = entry.data();
-        return {
-          principalId: String(value.principalId),
-          sessionId: entry.id,
-          displayName: String(value.displayName),
-          lastSeen: timestampMilliseconds(value.lastSeen),
-        };
-      }), this.now()));
+      listener(
+        activePresence(
+          snapshot.docs.map((entry) => {
+            const value = entry.data();
+            return {
+              principalId: String(value.principalId),
+              sessionId: entry.id,
+              displayName: String(value.displayName),
+              lastSeen: timestampMilliseconds(value.lastSeen),
+            };
+          }),
+          this.now(),
+        ),
+      );
     });
   }
 
@@ -607,7 +708,8 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
 
   private requireVerifiedPrincipal(): FirebasePrincipal {
     const principal = this.requirePrincipal();
-    if (principal.anonymous || !principal.verified) throw new Error("A verified account is required.");
+    if (principal.anonymous || !principal.verified)
+      throw new Error("A verified account is required.");
     return principal;
   }
 
@@ -624,8 +726,13 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
   }
 
   private parseDocument(id: string, record: CloudDocument): DocumentSnapshot<State, Summary> {
-    if (record.schemaVersion !== 1 || record.documentType !== this.definition.type) throw new Error("Cloud document is incompatible.");
-    const migrated = migrateDocumentState(this.definition, record.state, record.documentSchemaVersion);
+    if (record.schemaVersion !== 1 || record.documentType !== this.definition.type)
+      throw new Error("Cloud document is incompatible.");
+    const migrated = migrateDocumentState(
+      this.definition,
+      record.state,
+      record.documentSchemaVersion,
+    );
     if (!migrated.ok) throw new Error("Cloud document is invalid.");
     return {
       id,
@@ -646,10 +753,13 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
       throw new Error("Document exceeds the Firebase payload limit.");
     }
   }
-
 }
 
-export function activePresence(entries: readonly Presence[], now = Date.now(), ttlMs = 120_000): readonly Presence[] {
+export function activePresence(
+  entries: readonly Presence[],
+  now = Date.now(),
+  ttlMs = 120_000,
+): readonly Presence[] {
   const latest = new Map<string, Presence>();
   for (const entry of entries) {
     if (entry.lastSeen < now - ttlMs) continue;
@@ -669,14 +779,24 @@ function toPrincipal(user: User): FirebasePrincipal {
 }
 
 function timestampMilliseconds(value: unknown): number {
-  if (value && typeof value === "object" && "toMillis" in value && typeof value.toMillis === "function") {
-    return value.toMillis() as number;
-  }
+  if (hasToMillis(value)) return value.toMillis();
   return 0;
+}
+
+function hasToMillis(value: unknown): value is { toMillis(): number } {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    "toMillis" in value &&
+    typeof value.toMillis === "function"
+  );
 }
 
 function randomToken(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
-  return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+  return btoa(String.fromCharCode(...bytes))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replaceAll("=", "");
 }

@@ -20,17 +20,37 @@ export const definition = defineDocument<TestState, TestCommand, TestSummary>({
   summarize: (state) => ({ title: state.title, count: Object.keys(state.items).length }),
   reduce(state, command): ReducerResult<TestState> {
     if (command.type === "title") return { ok: true, state: { ...state, title: command.value } };
-    if (command.type === "set") return { ok: true, state: { ...state, items: { ...state.items, [command.id]: command.value } } };
-    if (!state.items[command.id]) return { ok: false, code: "missing-target", message: "Item is gone.", recoverable: command.id };
+    if (command.type === "set")
+      return {
+        ok: true,
+        state: { ...state, items: { ...state.items, [command.id]: command.value } },
+      };
+    if (!state.items[command.id])
+      return {
+        ok: false,
+        code: "missing-target",
+        message: "Item is gone.",
+        recoverable: command.id,
+      };
     const items = { ...state.items };
     delete items[command.id];
     return { ok: true, state: { ...state, items } };
   },
   commandPolicy: {
     inspect(command) {
-      if (command.type === "title") return { targets: ["title"], coalescingKey: "title", durability: "coalesced" };
-      if (command.type === "set") return { targets: [`item:${command.id}`], coalescingKey: `item:${command.id}`, durability: "coalesced" };
-      return { targets: [`item:${command.id}`], durability: "immediate", checkpointReason: "Delete Item" };
+      if (command.type === "title")
+        return { targets: ["title"], coalescingKey: "title", durability: "coalesced" };
+      if (command.type === "set")
+        return {
+          targets: [`item:${command.id}`],
+          coalescingKey: `item:${command.id}`,
+          durability: "coalesced",
+        };
+      return {
+        targets: [`item:${command.id}`],
+        durability: "immediate",
+        checkpointReason: "Delete Item",
+      };
     },
     coalesce(previous, next) {
       if (previous.type === "title" && next.type === "title") return next;

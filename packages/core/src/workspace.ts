@@ -4,12 +4,7 @@ import type { CommandEnvelope, DocumentSnapshot } from "./ports";
 export type WorkspaceSource = "url" | "device" | "cloud" | "publication" | "invitation";
 
 export type WorkspaceErrorCode =
-  | "not-found"
-  | "unauthorized"
-  | "revoked"
-  | "corrupt"
-  | "unavailable"
-  | "incompatible";
+  "not-found" | "unauthorized" | "revoked" | "corrupt" | "unavailable" | "incompatible";
 
 export type ResolvedWorkspace<State, Summary> = {
   readonly snapshot: DocumentSnapshot<State, Summary>;
@@ -28,8 +23,17 @@ export interface WorkspaceRouteResolver<State, Summary> {
 export type WorkspaceState<State, Summary> =
   | { readonly status: "idle" }
   | { readonly status: "loading"; readonly route: string }
-  | ({ readonly status: "ready"; readonly route: string; readonly historicalRevision?: number } & ResolvedWorkspace<State, Summary>)
-  | { readonly status: "error"; readonly route: string; readonly code: WorkspaceErrorCode; readonly message: string };
+  | ({
+      readonly status: "ready";
+      readonly route: string;
+      readonly historicalRevision?: number;
+    } & ResolvedWorkspace<State, Summary>)
+  | {
+      readonly status: "error";
+      readonly route: string;
+      readonly code: WorkspaceErrorCode;
+      readonly message: string;
+    };
 
 /**
  * Headless route and document lifecycle. Persistence and replication attach
@@ -81,10 +85,17 @@ export class WorkspaceEngine<State, Command, Summary> {
     if (this.current.status !== "ready" || this.current.readOnly) {
       return { code: "permission-denied", message: "This workspace is read-only." };
     }
-    if (envelope.documentId !== this.current.snapshot.id || envelope.documentType !== this.definition.type) {
+    if (
+      envelope.documentId !== this.current.snapshot.id ||
+      envelope.documentType !== this.definition.type
+    ) {
       return { code: "failed-precondition", message: "The command targets another document." };
     }
-    const result = applyDocumentCommand(this.definition, this.current.snapshot.state, envelope.command);
+    const result = applyDocumentCommand(
+      this.definition,
+      this.current.snapshot.state,
+      envelope.command,
+    );
     if (!result.ok) return result.failure;
     const snapshot = {
       ...this.current.snapshot,
@@ -98,19 +109,30 @@ export class WorkspaceEngine<State, Command, Summary> {
 
   public acceptHead(snapshot: DocumentSnapshot<State, Summary>): void {
     if (this.current.status !== "ready" || snapshot.id !== this.current.snapshot.id) return;
-    if (snapshot.revision < this.current.snapshot.revision && !this.current.historicalRevision) return;
+    if (snapshot.revision < this.current.snapshot.revision && !this.current.historicalRevision)
+      return;
     this.currentHead = snapshot;
     this.setState({ ...this.current, snapshot, historicalRevision: undefined });
   }
 
   public viewHistorical(snapshot: DocumentSnapshot<State, Summary>): void {
     if (this.current.status !== "ready" || snapshot.id !== this.current.snapshot.id) return;
-    this.setState({ ...this.current, snapshot, readOnly: true, historicalRevision: snapshot.revision });
+    this.setState({
+      ...this.current,
+      snapshot,
+      readOnly: true,
+      historicalRevision: snapshot.revision,
+    });
   }
 
   public returnToHead(): void {
     if (this.current.status !== "ready" || !this.currentHead) return;
-    this.setState({ ...this.current, snapshot: this.currentHead, readOnly: this.headReadOnly, historicalRevision: undefined });
+    this.setState({
+      ...this.current,
+      snapshot: this.currentHead,
+      readOnly: this.headReadOnly,
+      historicalRevision: undefined,
+    });
   }
 
   public dispose(): void {

@@ -16,7 +16,7 @@ for (const entry of packageEntries.filter((candidate) => candidate.isDirectory()
     await writeFile(snapshotPath, declaration);
     continue;
   }
-  let snapshot = "";
+  let snapshot;
   try {
     snapshot = normalize(await readFile(snapshotPath, "utf8"));
   } catch {
@@ -27,9 +27,15 @@ for (const entry of packageEntries.filter((candidate) => candidate.isDirectory()
 }
 
 if (failures.length) {
-  throw new Error(`API snapshot verification failed:\n${failures.join("\n")}\nRun npm run api:update after reviewing the public changes.`);
+  throw new Error(
+    `API snapshot verification failed:\n${failures.join("\n")}\nRun npm run api:update after reviewing the public changes.`,
+  );
 }
-console.log(update ? `Updated API snapshots in ${basename(snapshotDirectory)}.` : "API snapshots match built declarations.");
+console.log(
+  update
+    ? `Updated API snapshots in ${basename(snapshotDirectory)}.`
+    : "API snapshots match built declarations.",
+);
 
 function normalize(value) {
   return value.replaceAll("\r\n", "\n").trimEnd() + "\n";

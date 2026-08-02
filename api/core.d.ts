@@ -98,13 +98,16 @@ declare function applyDocumentCommand<State, Command, Summary>(definition: Docum
 /** Migrates untrusted persisted state through a contiguous migration chain. */
 declare function migrateDocumentState<State, Command, Summary>(definition: DocumentDefinition<State, Command, Summary>, value: unknown, fromVersion: number): ApplyResult<State>;
 
+/** Strength of the invariants enforced outside a consumer's own process. */
 type IntegrityLevel = "client-validated" | "envelope-enforced" | "server-authoritative";
 type CapabilityName = "snapshot" | "catalog" | "commands" | "history" | "subscription" | "outbox" | "publication" | "membership" | "presence";
+/** Runtime declaration of supported ports; orchestrators must not infer this from adapter names. */
 type CapabilityManifest = {
     readonly adapter: string;
     readonly integrity: IntegrityLevel;
     readonly capabilities: ReadonlySet<CapabilityName>;
 };
+/** Immutable, idempotent semantic command with revision and actor context. */
 type CommandEnvelope<Command> = {
     readonly protocolVersion: 1;
     readonly id: string;
@@ -115,6 +118,7 @@ type CommandEnvelope<Command> = {
     readonly issuedAt: number;
     readonly command: Command;
 };
+/** Validated document head returned by persistence and replication ports. */
 type DocumentSnapshot<State, Summary> = {
     readonly id: string;
     readonly documentType: string;
@@ -127,6 +131,7 @@ type DocumentSnapshot<State, Summary> = {
     readonly appliedCommandIds: readonly string[];
     readonly lastTargets: readonly string[];
 };
+/** Immutable named historical state. Restoring it must create a new head revision. */
 type DocumentCheckpoint<State> = {
     readonly documentId: string;
     readonly revision: number;
@@ -135,15 +140,22 @@ type DocumentCheckpoint<State> = {
     readonly reason: string;
     readonly createdAt: number;
 };
+/** CRUD port for document heads with optimistic replacement. */
 interface SnapshotStore<State, Summary> {
+    /** Returns the current validated head, or `null` when the identifier is absent. */
     load(id: string): Promise<DocumentSnapshot<State, Summary> | null>;
+    /** Creates revision zero and rejects an existing identifier. */
     create(id: string, state: State): Promise<DocumentSnapshot<State, Summary>>;
+    /** Replaces the head only when `expectedRevision` matches. */
     replace(id: string, state: State, expectedRevision: number): Promise<DocumentSnapshot<State, Summary>>;
+    /** Permanently removes the document according to adapter authorization policy. */
     delete(id: string): Promise<void>;
 }
+/** Lists lightweight document metadata without loading durable state. */
 interface DocumentCatalog<Summary> {
     list(): Promise<ReadonlyArray<Pick<DocumentSnapshot<unknown, Summary>, "id" | "documentType" | "summary" | "revision" | "createdAt" | "updatedAt">>>;
 }
+/** Result of an atomic semantic command commit. */
 type CommitResult<State, Summary> = {
     readonly ok: true;
     readonly snapshot: DocumentSnapshot<State, Summary>;
@@ -152,6 +164,7 @@ type CommitResult<State, Summary> = {
     readonly failure: DocumentFailure;
     readonly latest?: DocumentSnapshot<State, Summary>;
 };
+/** Atomically validates and applies semantic commands against current revisions. */
 interface CommandCommitStore<State, Command, Summary> {
     commit(envelope: CommandEnvelope<Command>, checkpointReason?: string): Promise<CommitResult<State, Summary>>;
 }
@@ -161,32 +174,44 @@ interface CommandCommitStore<State, Command, Summary> {
  * target history to prove that every intervening change was independent.
  */
 declare function assessRevisionConflict(baseRevision: number, currentRevision: number, commandTargets: readonly string[], latestTargets: readonly string[], conflictLabel?: string): DocumentFailure | null;
+/** Named checkpoint lookup and restoration source. */
 interface RevisionHistoryStore<State> {
+    /** Lists retained checkpoints in adapter-defined stable order. */
     listCheckpoints(documentId: string): Promise<readonly DocumentCheckpoint<State>[]>;
+    /** Loads a checkpoint; this method does not mutate the document head. */
     restore(documentId: string, revision: number): Promise<DocumentCheckpoint<State>>;
 }
+/** Push subscription to monotonically newer validated document heads. */
 interface DocumentSubscription<State, Summary> {
     subscribe(documentId: string, listener: (snapshot: DocumentSnapshot<State, Summary>) => void): () => void;
 }
+/** Durable pending command used for crash-safe replay. */
 type OutboxRecord<Command> = {
     readonly envelope: CommandEnvelope<Command>;
     readonly checkpointReason?: string;
     readonly coalescingKey?: string;
     readonly stagedAt: number;
 };
+/** Durable ordered queue for commands not yet acknowledged by a remote store. */
 interface OutboxStore<Command> {
+    /** Appends a command after making it locally durable. */
     put(record: OutboxRecord<Command>): Promise<void>;
+    /** Atomically replaces a coalesced command while preserving queue position semantics. */
     replace(previousCommandId: string, record: OutboxRecord<Command>): Promise<void>;
+    /** Removes an acknowledged or explicitly discarded command. */
     delete(commandId: string): Promise<void>;
+    /** Returns commands for one document in semantic replay order. */
     list(documentId: string): Promise<readonly OutboxRecord<Command>[]>;
 }
 type PublicationKind = "view" | "launch" | "editor";
+/** Bearer publication metadata; tokens are credentials and must never be logged. */
 type Publication = {
     readonly token: string;
     readonly documentId: string;
     readonly kind: PublicationKind;
     readonly revision: number;
 };
+/** Creates, revokes, and resolves explicit view, launch, or editor publications. */
 interface PublicationStore<State, Summary> {
     publish(documentId: string, kind: PublicationKind, rotate?: boolean): Promise<Publication>;
     revoke(documentId: string, kind: PublicationKind): Promise<void>;
@@ -200,23 +225,27 @@ type Member = {
     readonly principalId: string;
     readonly role: MemberRole;
 };
+/** Membership administration kept independent from authentication. */
 interface MembershipStore {
     listMembers(documentId: string): Promise<readonly Member[]>;
     setMember(documentId: string, member: Member): Promise<void>;
     removeMember(documentId: string, principalId: string): Promise<void>;
     transferOwnership(documentId: string, principalId: string): Promise<void>;
 }
+/** Ephemeral session presence. `lastSeen` is interpreted using adapter TTL policy. */
 type Presence = {
     readonly principalId: string;
     readonly sessionId: string;
     readonly displayName: string;
     readonly lastSeen: number;
 };
+/** Optional TTL-based collaboration presence, separate from durable content. */
 interface PresenceStore {
     heartbeat(documentId: string, presence: Presence): Promise<void>;
     clear(documentId: string, sessionId: string): Promise<void>;
     subscribePresence(documentId: string, listener: (presence: readonly Presence[]) => void): () => void;
 }
+/** Creates a protocol-v1 envelope with injectable identity and time for deterministic tests. */
 declare function createCommandEnvelope<Command>(options: {
     readonly id?: string;
     readonly documentId: string;

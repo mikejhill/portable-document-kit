@@ -16,10 +16,7 @@ export type ValidationResult<T> =
 export type DocumentSchema<T> = StandardSchemaV1<unknown, T>;
 
 /** Validates an untrusted value without binding the core to a schema vendor. */
-export function validateValue<T>(
-  schema: DocumentSchema<T>,
-  value: unknown,
-): ValidationResult<T> {
+export function validateValue<T>(schema: DocumentSchema<T>, value: unknown): ValidationResult<T> {
   const result = schema["~standard"].validate(value);
   if (result instanceof Promise) {
     return {

@@ -30,14 +30,13 @@ export function PortableDocumentProvider<State, Command, Summary>({
   disposeOnUnmount = false,
   children,
 }: PortableDocumentProviderProps<State, Command, Summary>): ReactNode {
-  useEffect(() => () => {
-    if (disposeOnUnmount) engine.dispose();
-  }, [disposeOnUnmount, engine]);
-  return createElement(
-    WorkspaceContext.Provider,
-    { value: engine as UnknownEngine },
-    children,
+  useEffect(
+    () => () => {
+      if (disposeOnUnmount) engine.dispose();
+    },
+    [disposeOnUnmount, engine],
   );
+  return createElement(WorkspaceContext.Provider, { value: engine as UnknownEngine }, children);
 }
 
 export function useWorkspace<State, Command, Summary>(): WorkspaceState<State, Summary> {
@@ -45,7 +44,11 @@ export function useWorkspace<State, Command, Summary>(): WorkspaceState<State, S
   return useSyncExternalStore(engine.subscribe, engine.getSnapshot, engine.getSnapshot);
 }
 
-export function useWorkspaceEngine<State, Command, Summary>(): WorkspaceEngine<State, Command, Summary> {
+export function useWorkspaceEngine<State, Command, Summary>(): WorkspaceEngine<
+  State,
+  Command,
+  Summary
+> {
   const engine = useContext(WorkspaceContext);
   if (!engine) throw new Error("useWorkspaceEngine requires PortableDocumentProvider.");
   return engine as WorkspaceEngine<State, Command, Summary>;
@@ -69,7 +72,10 @@ export function useWorkspaceActions<State, Command, Summary>(): {
     [engine],
   );
   const returnToHead = useCallback(() => engine.returnToHead(), [engine]);
-  return useMemo(() => ({ open, dispatchSpeculative, returnToHead }), [dispatchSpeculative, open, returnToHead]);
+  return useMemo(
+    () => ({ open, dispatchSpeculative, returnToHead }),
+    [dispatchSpeculative, open, returnToHead],
+  );
 }
 
 export type WorkspaceErrorBoundaryFallback = (error: Error) => ReactNode;

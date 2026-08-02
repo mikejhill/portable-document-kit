@@ -100,7 +100,13 @@ class IndexedDbDatabase {
 
 /** Validated local document repository with revision and subscription support. */
 export class IndexedDbDocumentStore<State, Command, Summary>
-implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommitStore<State, Command, Summary>, RevisionHistoryStore<State>, DocumentSubscription<State, Summary> {
+  implements
+    SnapshotStore<State, Summary>,
+    DocumentCatalog<Summary>,
+    CommandCommitStore<State, Command, Summary>,
+    RevisionHistoryStore<State>,
+    DocumentSubscription<State, Summary>
+{
   public readonly manifest: CapabilityManifest = {
     adapter: "indexeddb",
     integrity: "client-validated",
@@ -109,7 +115,10 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
   private readonly database: IndexedDbDatabase;
   private readonly now: () => number;
   private readonly checkpointLimit: number;
-  private readonly listeners = new Map<string, Set<(snapshot: DocumentSnapshot<State, Summary>) => void>>();
+  private readonly listeners = new Map<
+    string,
+    Set<(snapshot: DocumentSnapshot<State, Summary>) => void>
+  >();
   private readonly channel: BroadcastChannel | null;
 
   public constructor(
@@ -119,9 +128,12 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
     this.database = new IndexedDbDatabase(options);
     this.now = options.now ?? Date.now;
     this.checkpointLimit = options.checkpointLimit ?? 25;
-    const Channel = options.broadcastChannel === undefined
-      ? (typeof BroadcastChannel === "undefined" ? undefined : BroadcastChannel)
-      : options.broadcastChannel ?? undefined;
+    const Channel =
+      options.broadcastChannel === undefined
+        ? typeof BroadcastChannel === "undefined"
+          ? undefined
+          : BroadcastChannel
+        : (options.broadcastChannel ?? undefined);
     this.channel = Channel ? new Channel(`${options.databaseName}:portable-documents`) : null;
     this.channel?.addEventListener("message", (event: MessageEvent<unknown>) => {
       if (typeof event.data === "string") void this.emit(event.data, false);
@@ -131,31 +143,48 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
   public async load(id: string): Promise<DocumentSnapshot<State, Summary> | null> {
     const database = await this.database.open();
     const transaction = database.transaction(DOCUMENTS, "readonly");
-    const raw = await requestValue<StoredDocument | undefined>(transaction.objectStore(DOCUMENTS).get(id));
+    const raw = await requestValue<StoredDocument | undefined>(
+      transaction.objectStore(DOCUMENTS).get(id),
+    );
     await transactionComplete(transaction);
     return raw ? this.parse(raw) : null;
   }
 
-  public async list(): Promise<ReadonlyArray<Pick<DocumentSnapshot<unknown, Summary>, "id" | "documentType" | "summary" | "revision" | "createdAt" | "updatedAt">>> {
+  public async list(): Promise<
+    ReadonlyArray<
+      Pick<
+        DocumentSnapshot<unknown, Summary>,
+        "id" | "documentType" | "summary" | "revision" | "createdAt" | "updatedAt"
+      >
+    >
+  > {
     const database = await this.database.open();
     const transaction = database.transaction(DOCUMENTS, "readonly");
-    const records = await requestValue<StoredDocument[]>(transaction.objectStore(DOCUMENTS).getAll());
+    const records = await requestValue<StoredDocument[]>(
+      transaction.objectStore(DOCUMENTS).getAll(),
+    );
     await transactionComplete(transaction);
-    return records.map((record) => {
-      const parsed = this.parse(record);
-      return {
-        id: parsed.id,
-        documentType: parsed.documentType,
-        summary: parsed.summary,
-        revision: parsed.revision,
-        createdAt: parsed.createdAt,
-        updatedAt: parsed.updatedAt,
-      };
-    }).sort((left, right) => right.updatedAt - left.updatedAt);
+    return records
+      .map((record) => {
+        const parsed = this.parse(record);
+        return {
+          id: parsed.id,
+          documentType: parsed.documentType,
+          summary: parsed.summary,
+          revision: parsed.revision,
+          createdAt: parsed.createdAt,
+          updatedAt: parsed.updatedAt,
+        };
+      })
+      .sort((left, right) => right.updatedAt - left.updatedAt);
   }
 
   public async create(id: string, state: State): Promise<DocumentSnapshot<State, Summary>> {
-    const validated = migrateDocumentState(this.definition, state, this.definition.currentSchemaVersion);
+    const validated = migrateDocumentState(
+      this.definition,
+      state,
+      this.definition.currentSchemaVersion,
+    );
     if (!validated.ok) throw new Error("Cannot store invalid document state.");
     const now = this.now();
     const snapshot: DocumentSnapshot<State, Summary> = {
@@ -173,7 +202,7 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
     const database = await this.database.open();
     const transaction = database.transaction([DOCUMENTS, CHECKPOINTS], "readwrite");
     const documents = transaction.objectStore(DOCUMENTS);
-    if (await requestValue(documents.getKey(id)) !== undefined) {
+    if ((await requestValue(documents.getKey(id))) !== undefined) {
       transaction.abort();
       throw new Error("Document already exists.");
     }
@@ -184,14 +213,22 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
     return snapshot;
   }
 
-  public async replace(id: string, state: State, expectedRevision: number): Promise<DocumentSnapshot<State, Summary>> {
-    const validated = migrateDocumentState(this.definition, state, this.definition.currentSchemaVersion);
+  public async replace(
+    id: string,
+    state: State,
+    expectedRevision: number,
+  ): Promise<DocumentSnapshot<State, Summary>> {
+    const validated = migrateDocumentState(
+      this.definition,
+      state,
+      this.definition.currentSchemaVersion,
+    );
     if (!validated.ok) throw new Error("Cannot store invalid document state.");
     const database = await this.database.open();
     const transaction = database.transaction(DOCUMENTS, "readwrite");
     const store = transaction.objectStore(DOCUMENTS);
     const raw = await requestValue<StoredDocument | undefined>(store.get(id));
-    if (!raw || raw.revision !== expectedRevision) {
+    if (raw?.revision !== expectedRevision) {
       transaction.abort();
       throw new Error("Document revision changed.");
     }
@@ -214,15 +251,23 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
     const transaction = database.transaction([DOCUMENTS, CHECKPOINTS], "readwrite");
     transaction.objectStore(DOCUMENTS).delete(id);
     const checkpointStore = transaction.objectStore(CHECKPOINTS);
-    const keys = await requestValue<IDBValidKey[]>(checkpointStore.index("documentId").getAllKeys(id));
+    const keys = await requestValue<IDBValidKey[]>(
+      checkpointStore.index("documentId").getAllKeys(id),
+    );
     for (const key of keys) checkpointStore.delete(key);
     await transactionComplete(transaction);
     await this.changed(id);
   }
 
-  public async commit(envelope: CommandEnvelope<Command>, checkpointReason?: string): Promise<CommitResult<State, Summary>> {
+  public async commit(
+    envelope: CommandEnvelope<Command>,
+    checkpointReason?: string,
+  ): Promise<CommitResult<State, Summary>> {
     if (envelope.documentType !== this.definition.type) {
-      return { ok: false, failure: { code: "failed-precondition", message: "Wrong document type." } };
+      return {
+        ok: false,
+        failure: { code: "failed-precondition", message: "Wrong document type." },
+      };
     }
     const database = await this.database.open();
     const transaction = database.transaction([DOCUMENTS, CHECKPOINTS], "readwrite");
@@ -230,7 +275,10 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
     const raw = await requestValue<StoredDocument | undefined>(store.get(envelope.documentId));
     if (!raw) {
       transaction.abort();
-      return { ok: false, failure: { code: "missing-target", message: "Document no longer exists." } };
+      return {
+        ok: false,
+        failure: { code: "missing-target", message: "Document no longer exists." },
+      };
     }
     const current = this.parse(raw);
     if (current.appliedCommandIds.includes(envelope.id)) {
@@ -268,8 +316,12 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
     if (checkpointReason) {
       const checkpoints = transaction.objectStore(CHECKPOINTS);
       checkpoints.put(this.checkpoint(snapshot, checkpointReason));
-      const existing = await requestValue<StoredCheckpoint[]>(checkpoints.index("documentId").getAll(envelope.documentId));
-      for (const stale of existing.sort((a, b) => a.revision - b.revision).slice(0, Math.max(0, existing.length - this.checkpointLimit))) {
+      const existing = await requestValue<StoredCheckpoint[]>(
+        checkpoints.index("documentId").getAll(envelope.documentId),
+      );
+      for (const stale of existing
+        .sort((a, b) => a.revision - b.revision)
+        .slice(0, Math.max(0, existing.length - this.checkpointLimit))) {
         checkpoints.delete(stale.key);
       }
     }
@@ -281,13 +333,17 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
   public async listCheckpoints(documentId: string): Promise<readonly DocumentCheckpoint<State>[]> {
     const database = await this.database.open();
     const transaction = database.transaction(CHECKPOINTS, "readonly");
-    const records = await requestValue<StoredCheckpoint[]>(transaction.objectStore(CHECKPOINTS).index("documentId").getAll(documentId));
+    const records = await requestValue<StoredCheckpoint[]>(
+      transaction.objectStore(CHECKPOINTS).index("documentId").getAll(documentId),
+    );
     await transactionComplete(transaction);
-    return records.map((record) => {
-      const migrated = migrateDocumentState(this.definition, record.state, record.schemaVersion);
-      if (!migrated.ok) throw new Error("Stored checkpoint is invalid.");
-      return { ...record, state: migrated.state };
-    }).sort((left, right) => right.revision - left.revision);
+    return records
+      .map((record) => {
+        const migrated = migrateDocumentState(this.definition, record.state, record.schemaVersion);
+        if (!migrated.ok) throw new Error("Stored checkpoint is invalid.");
+        return { ...record, state: migrated.state };
+      })
+      .sort((left, right) => right.revision - left.revision);
   }
 
   public async restore(documentId: string, revision: number): Promise<DocumentCheckpoint<State>> {
@@ -297,7 +353,10 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
     return checkpoint;
   }
 
-  public subscribe(documentId: string, listener: (snapshot: DocumentSnapshot<State, Summary>) => void): () => void {
+  public subscribe(
+    documentId: string,
+    listener: (snapshot: DocumentSnapshot<State, Summary>) => void,
+  ): () => void {
     const listeners = this.listeners.get(documentId) ?? new Set();
     listeners.add(listener);
     this.listeners.set(documentId, listeners);
@@ -314,7 +373,8 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
   }
 
   private parse(record: StoredDocument): DocumentSnapshot<State, Summary> {
-    if (record.documentType !== this.definition.type) throw new Error("Stored document has the wrong type.");
+    if (record.documentType !== this.definition.type)
+      throw new Error("Stored document has the wrong type.");
     const migrated = migrateDocumentState(this.definition, record.state, record.schemaVersion);
     if (!migrated.ok) throw new Error("Stored document is invalid or incompatible.");
     return {
@@ -391,7 +451,9 @@ export class IndexedDbOutboxStore<Command> implements OutboxStore<Command> {
   public async list(documentId: string): Promise<readonly OutboxRecord<Command>[]> {
     const database = await this.database.open();
     const transaction = database.transaction(OUTBOX, "readonly");
-    const records = await requestValue<OutboxRecord<Command>[]>(transaction.objectStore(OUTBOX).index("documentId").getAll(documentId));
+    const records = await requestValue<OutboxRecord<Command>[]>(
+      transaction.objectStore(OUTBOX).index("documentId").getAll(documentId),
+    );
     await transactionComplete(transaction);
     return records.sort((left, right) => left.stagedAt - right.stagedAt);
   }
@@ -411,7 +473,9 @@ function requestValue<T>(request: IDBRequest<T>): Promise<T> {
 function transactionComplete(transaction: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     transaction.oncomplete = () => resolve();
-    transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction aborted."));
-    transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed."));
+    transaction.onabort = () =>
+      reject(transaction.error ?? new Error("IndexedDB transaction aborted."));
+    transaction.onerror = () =>
+      reject(transaction.error ?? new Error("IndexedDB transaction failed."));
   });
 }

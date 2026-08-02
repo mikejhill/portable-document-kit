@@ -17,10 +17,7 @@ export type CommandPolicy<Command> = {
 };
 
 export type ReducerRejectionCode =
-  | "missing-target"
-  | "failed-precondition"
-  | "permission-denied"
-  | "conflict";
+  "missing-target" | "failed-precondition" | "permission-denied" | "conflict";
 
 export type ReducerResult<State> =
   | { readonly ok: true; readonly state: State }
@@ -48,8 +45,11 @@ export type DocumentDefinition<State, Command, Summary> = {
   readonly commandPolicy: CommandPolicy<Command>;
 };
 
-export type DocumentDefinitionOptions<State, Command, Summary> =
-  DocumentDefinition<State, Command, Summary>;
+export type DocumentDefinitionOptions<State, Command, Summary> = DocumentDefinition<
+  State,
+  Command,
+  Summary
+>;
 
 /** Defines one consumer document contract and verifies its migration graph. */
 export function defineDocument<State, Command, Summary>(
@@ -108,8 +108,14 @@ export function applyDocumentCommand<State, Command, Summary>(
     };
   }
   if (!reduced.ok) {
-    const { ok: _ok, ...failure } = reduced;
-    return { ok: false, failure };
+    return {
+      ok: false,
+      failure: {
+        code: reduced.code,
+        message: reduced.message,
+        ...(reduced.recoverable === undefined ? {} : { recoverable: reduced.recoverable }),
+      },
+    };
   }
   const validated = validateValue(definition.stateSchema, reduced.state);
   if (!validated.ok) {
@@ -124,7 +130,11 @@ export function migrateDocumentState<State, Command, Summary>(
   value: unknown,
   fromVersion: number,
 ): ApplyResult<State> {
-  if (!Number.isInteger(fromVersion) || fromVersion < 1 || fromVersion > definition.currentSchemaVersion) {
+  if (
+    !Number.isInteger(fromVersion) ||
+    fromVersion < 1 ||
+    fromVersion > definition.currentSchemaVersion
+  ) {
     return { ok: false, failure: { code: "incompatible-version", version: fromVersion } };
   }
   let migrated = value;

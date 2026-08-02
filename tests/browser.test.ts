@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { BrowserHistoryPort, FragmentRouter, NavigationPolicy, WindowLifecycle, createPortableUrl } from "@mikejhill/portable-document-browser";
+import {
+  BrowserHistoryPort,
+  FragmentRouter,
+  NavigationPolicy,
+  WindowLifecycle,
+  createPortableUrl,
+} from "@mikejhill/portable-document-browser";
 import { PortableSnapshotCodec } from "@mikejhill/portable-document-codec";
 import { definition, initialState } from "./fixture";
 
@@ -25,15 +31,20 @@ describe("browser adapters", () => {
 
   it("creates complete portable URLs without retaining old fragments", () => {
     const codec = new PortableSnapshotCodec({ prefix: "#test1:", definition });
-    expect(createPortableUrl(codec, initialState, "https://example.test/app#old")).toMatch(/^https:\/\/example\.test\/app#test1:/);
+    expect(createPortableUrl(codec, initialState, "https://example.test/app#old")).toMatch(
+      /^https:\/\/example\.test\/app#test1:/,
+    );
   });
 
   it("rejects invalid and duplicate route registrations", () => {
     expect(() => new FragmentRouter([{ kind: "action", prefix: "new" }])).toThrow(/start with/);
-    expect(() => new FragmentRouter([
-      { kind: "action", prefix: "#new" },
-      { kind: "snapshot", prefix: "#new" },
-    ])).toThrow(/Duplicate/);
+    expect(
+      () =>
+        new FragmentRouter([
+          { kind: "action", prefix: "#new" },
+          { kind: "snapshot", prefix: "#new" },
+        ]),
+    ).toThrow(/Duplicate/);
     expect(new FragmentRouter([]).parse("#unknown")).toBeNull();
   });
 
@@ -43,7 +54,9 @@ describe("browser adapters", () => {
     const browserWindow = {
       history,
       location: { hash: "#restored" },
-      addEventListener: vi.fn((name: string, listener: EventListener) => listeners.set(name, listener)),
+      addEventListener: vi.fn((name: string, listener: EventListener) =>
+        listeners.set(name, listener),
+      ),
       removeEventListener: vi.fn((name: string) => listeners.delete(name)),
     } as never;
     const port = new BrowserHistoryPort(browserWindow);
@@ -65,11 +78,13 @@ describe("browser adapters", () => {
     const windowListeners = new Map<string, EventListener>();
     const documentPort = {
       visibilityState: "visible",
-      addEventListener: (name: string, listener: EventListener) => documentListeners.set(name, listener),
+      addEventListener: (name: string, listener: EventListener) =>
+        documentListeners.set(name, listener),
       removeEventListener: (name: string) => documentListeners.delete(name),
     } as never;
     const windowPort = {
-      addEventListener: (name: string, listener: EventListener) => windowListeners.set(name, listener),
+      addEventListener: (name: string, listener: EventListener) =>
+        windowListeners.set(name, listener),
       removeEventListener: (name: string) => windowListeners.delete(name),
     } as never;
     const lifecycle = new WindowLifecycle(documentPort, windowPort);

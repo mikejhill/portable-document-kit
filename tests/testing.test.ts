@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { createCommandEnvelope } from "@mikejhill/portable-document-core";
-import { FakeClock, InMemoryDocumentStore, InMemoryOutboxStore, assertSnapshotStoreConformance } from "@mikejhill/portable-document-testing";
+import {
+  FakeClock,
+  InMemoryDocumentStore,
+  InMemoryOutboxStore,
+  assertSnapshotStoreConformance,
+} from "@mikejhill/portable-document-testing";
 import { definition, initialState } from "./fixture";
 
 describe("testing reference adapters", () => {
@@ -13,7 +18,12 @@ describe("testing reference adapters", () => {
 
   it("passes conformance and protects stored values from mutation", async () => {
     const store = new InMemoryDocumentStore(definition, () => 10);
-    await assertSnapshotStoreConformance({ store, id: "conformance", initial: initialState, replacement: { title: "Next", items: {} } });
+    await assertSnapshotStoreConformance({
+      store,
+      id: "conformance",
+      initial: initialState,
+      replacement: { title: "Next", items: {} },
+    });
     const created = await store.create("doc", initialState);
     (created.state.items as Record<string, string>).a = "mutated";
     expect((await store.load("doc"))?.state.items.a).toBe("A");
@@ -27,8 +37,17 @@ describe("testing reference adapters", () => {
     const listener = vi.fn();
     const unsubscribe = store.subscribe("doc", listener);
     await store.create("doc", initialState);
-    const command = createCommandEnvelope({ id: "one", documentId: "doc", documentType: definition.type, baseRevision: 1, command: { type: "set" as const, id: "b", value: "B" } });
-    expect(await store.commit(command, "Add")).toMatchObject({ ok: true, snapshot: { revision: 2 } });
+    const command = createCommandEnvelope({
+      id: "one",
+      documentId: "doc",
+      documentType: definition.type,
+      baseRevision: 1,
+      command: { type: "set" as const, id: "b", value: "B" },
+    });
+    expect(await store.commit(command, "Add")).toMatchObject({
+      ok: true,
+      snapshot: { revision: 2 },
+    });
     expect(await store.commit(command)).toMatchObject({ ok: true, snapshot: { revision: 2 } });
     expect(listener).toHaveBeenCalledTimes(2);
     unsubscribe();
@@ -37,14 +56,25 @@ describe("testing reference adapters", () => {
     expect(await store.listCheckpoints("doc")).toHaveLength(2);
     expect(await store.restore("doc", 2)).toMatchObject({ reason: "Add" });
     await expect(store.restore("doc", 99)).rejects.toThrow(/Checkpoint/);
-    expect(await store.commit({ ...command, id: "missing", documentId: "missing" })).toMatchObject({ ok: false, failure: { code: "missing-target" } });
-    expect(await store.commit({ ...command, id: "bad", command: { type: "delete", id: "missing" } })).toMatchObject({ ok: false, latest: { id: "doc" } });
+    expect(await store.commit({ ...command, id: "missing", documentId: "missing" })).toMatchObject({
+      ok: false,
+      failure: { code: "missing-target" },
+    });
+    expect(
+      await store.commit({ ...command, id: "bad", command: { type: "delete", id: "missing" } }),
+    ).toMatchObject({ ok: false, latest: { id: "doc" } });
   });
 
   it("orders and isolates in-memory outbox records", async () => {
     const outbox = new InMemoryOutboxStore<{ type: string }>();
     const record = (id: string, documentId: string, stagedAt: number) => ({
-      envelope: createCommandEnvelope({ id, documentId, documentType: definition.type, baseRevision: 1, command: { type: "x" } }),
+      envelope: createCommandEnvelope({
+        id,
+        documentId,
+        documentType: definition.type,
+        baseRevision: 1,
+        command: { type: "x" },
+      }),
       stagedAt,
     });
     await outbox.put(record("later", "doc", 2));
@@ -58,11 +88,36 @@ describe("testing reference adapters", () => {
   it("merges independent stale targets and rejects overlapping ones", async () => {
     const store = new InMemoryDocumentStore(definition);
     await store.create("doc", initialState);
-    const remoteTitle = createCommandEnvelope({ id: "remote", documentId: "doc", documentType: definition.type, baseRevision: 1, command: { type: "title" as const, value: "Remote" } });
+    const remoteTitle = createCommandEnvelope({
+      id: "remote",
+      documentId: "doc",
+      documentType: definition.type,
+      baseRevision: 1,
+      command: { type: "title" as const, value: "Remote" },
+    });
     expect(await store.commit(remoteTitle)).toMatchObject({ ok: true, snapshot: { revision: 2 } });
-    const independent = createCommandEnvelope({ id: "independent", documentId: "doc", documentType: definition.type, baseRevision: 1, command: { type: "set" as const, id: "b", value: "B" } });
-    expect(await store.commit(independent)).toMatchObject({ ok: true, snapshot: { revision: 3, state: { title: "Remote", items: { b: "B" } } } });
-    const overlapping = createCommandEnvelope({ id: "overlap", documentId: "doc", documentType: definition.type, baseRevision: 2, command: { type: "set" as const, id: "b", value: "Local" } });
-    expect(await store.commit(overlapping)).toMatchObject({ ok: false, failure: { code: "conflict" }, latest: { revision: 3 } });
+    const independent = createCommandEnvelope({
+      id: "independent",
+      documentId: "doc",
+      documentType: definition.type,
+      baseRevision: 1,
+      command: { type: "set" as const, id: "b", value: "B" },
+    });
+    expect(await store.commit(independent)).toMatchObject({
+      ok: true,
+      snapshot: { revision: 3, state: { title: "Remote", items: { b: "B" } } },
+    });
+    const overlapping = createCommandEnvelope({
+      id: "overlap",
+      documentId: "doc",
+      documentType: definition.type,
+      baseRevision: 2,
+      command: { type: "set" as const, id: "b", value: "Local" },
+    });
+    expect(await store.commit(overlapping)).toMatchObject({
+      ok: false,
+      failure: { code: "conflict" },
+      latest: { revision: 3 },
+    });
   });
 });

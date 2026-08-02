@@ -14,8 +14,8 @@ export default defineConfig({
       "@mikejhill/portable-document-sync": packageSource("sync"),
       "@mikejhill/portable-document-firebase": packageSource("firebase"),
       "@mikejhill/portable-document-react": packageSource("react", "tsx"),
-      "@mikejhill/portable-document-testing": packageSource("testing")
-    }
+      "@mikejhill/portable-document-testing": packageSource("testing"),
+    },
   },
   test: {
     environment: "node",
@@ -26,7 +26,7 @@ export default defineConfig({
         "examples/structured-notes/src/model.ts",
       ],
       reporter: ["text", "json-summary"],
-      thresholds: { statements: 85, lines: 85, branches: 80, functions: 90 }
-    }
-  }
+      thresholds: { statements: 95, lines: 95, branches: 90, functions: 94 },
+    },
+  },
 });

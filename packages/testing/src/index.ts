@@ -28,10 +28,19 @@ export class FakeClock {
 
 /** Reference adapter used by consumers and provider conformance tests. */
 export class InMemoryDocumentStore<State, Command, Summary>
-implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommitStore<State, Command, Summary>, RevisionHistoryStore<State>, DocumentSubscription<State, Summary> {
+  implements
+    SnapshotStore<State, Summary>,
+    DocumentCatalog<Summary>,
+    CommandCommitStore<State, Command, Summary>,
+    RevisionHistoryStore<State>,
+    DocumentSubscription<State, Summary>
+{
   private readonly documents = new Map<string, DocumentSnapshot<State, Summary>>();
   private readonly checkpoints = new Map<string, DocumentCheckpoint<State>[]>();
-  private readonly listeners = new Map<string, Set<(snapshot: DocumentSnapshot<State, Summary>) => void>>();
+  private readonly listeners = new Map<
+    string,
+    Set<(snapshot: DocumentSnapshot<State, Summary>) => void>
+  >();
 
   public constructor(
     private readonly definition: DocumentDefinition<State, Command, Summary>,
@@ -42,14 +51,27 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
     return clone(this.documents.get(id) ?? null);
   }
 
-  public async list(): Promise<ReadonlyArray<Pick<DocumentSnapshot<unknown, Summary>, "id" | "documentType" | "summary" | "revision" | "createdAt" | "updatedAt">>> {
-    return [...this.documents.values()].map(({ id, documentType, summary, revision, createdAt, updatedAt }) =>
-      clone({ id, documentType, summary, revision, createdAt, updatedAt }));
+  public async list(): Promise<
+    ReadonlyArray<
+      Pick<
+        DocumentSnapshot<unknown, Summary>,
+        "id" | "documentType" | "summary" | "revision" | "createdAt" | "updatedAt"
+      >
+    >
+  > {
+    return [...this.documents.values()].map(
+      ({ id, documentType, summary, revision, createdAt, updatedAt }) =>
+        clone({ id, documentType, summary, revision, createdAt, updatedAt }),
+    );
   }
 
   public async create(id: string, state: State): Promise<DocumentSnapshot<State, Summary>> {
     if (this.documents.has(id)) throw new Error("Document already exists.");
-    const parsed = migrateDocumentState(this.definition, state, this.definition.currentSchemaVersion);
+    const parsed = migrateDocumentState(
+      this.definition,
+      state,
+      this.definition.currentSchemaVersion,
+    );
     if (!parsed.ok) throw new Error("Invalid document state.");
     const now = this.now();
     const snapshot: DocumentSnapshot<State, Summary> = {
@@ -65,22 +87,32 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
       lastTargets: [],
     };
     this.documents.set(id, clone(snapshot));
-    this.checkpoints.set(id, [{
-      documentId: id,
-      revision: 1,
-      schemaVersion: snapshot.schemaVersion,
-      state: clone(snapshot.state),
-      reason: "Document Created",
-      createdAt: now,
-    }]);
+    this.checkpoints.set(id, [
+      {
+        documentId: id,
+        revision: 1,
+        schemaVersion: snapshot.schemaVersion,
+        state: clone(snapshot.state),
+        reason: "Document Created",
+        createdAt: now,
+      },
+    ]);
     this.emit(snapshot);
     return clone(snapshot);
   }
 
-  public async replace(id: string, state: State, expectedRevision: number): Promise<DocumentSnapshot<State, Summary>> {
+  public async replace(
+    id: string,
+    state: State,
+    expectedRevision: number,
+  ): Promise<DocumentSnapshot<State, Summary>> {
     const current = this.documents.get(id);
-    if (!current || current.revision !== expectedRevision) throw new Error("Document revision changed.");
-    const parsed = migrateDocumentState(this.definition, state, this.definition.currentSchemaVersion);
+    if (current?.revision !== expectedRevision) throw new Error("Document revision changed.");
+    const parsed = migrateDocumentState(
+      this.definition,
+      state,
+      this.definition.currentSchemaVersion,
+    );
     if (!parsed.ok) throw new Error("Invalid document state.");
     const snapshot = {
       ...current,
@@ -100,10 +132,18 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
     this.checkpoints.delete(id);
   }
 
-  public async commit(envelope: CommandEnvelope<Command>, checkpointReason?: string): Promise<CommitResult<State, Summary>> {
+  public async commit(
+    envelope: CommandEnvelope<Command>,
+    checkpointReason?: string,
+  ): Promise<CommitResult<State, Summary>> {
     const current = this.documents.get(envelope.documentId);
-    if (!current) return { ok: false, failure: { code: "missing-target", message: "Document no longer exists." } };
-    if (current.appliedCommandIds.includes(envelope.id)) return { ok: true, snapshot: clone(current) };
+    if (!current)
+      return {
+        ok: false,
+        failure: { code: "missing-target", message: "Document no longer exists." },
+      };
+    if (current.appliedCommandIds.includes(envelope.id))
+      return { ok: true, snapshot: clone(current) };
     const result = applyDocumentCommand(this.definition, current.state, envelope.command);
     if (!result.ok) return { ok: false, failure: result.failure, latest: clone(current) };
     const metadata = this.definition.commandPolicy.inspect(envelope.command);
@@ -146,12 +186,17 @@ implements SnapshotStore<State, Summary>, DocumentCatalog<Summary>, CommandCommi
   }
 
   public async restore(documentId: string, revision: number): Promise<DocumentCheckpoint<State>> {
-    const checkpoint = this.checkpoints.get(documentId)?.find((candidate) => candidate.revision === revision);
+    const checkpoint = this.checkpoints
+      .get(documentId)
+      ?.find((candidate) => candidate.revision === revision);
     if (!checkpoint) throw new Error("Checkpoint no longer exists.");
     return clone(checkpoint);
   }
 
-  public subscribe(documentId: string, listener: (snapshot: DocumentSnapshot<State, Summary>) => void): () => void {
+  public subscribe(
+    documentId: string,
+    listener: (snapshot: DocumentSnapshot<State, Summary>) => void,
+  ): () => void {
     const values = this.listeners.get(documentId) ?? new Set();
     values.add(listener);
     this.listeners.set(documentId, values);
@@ -196,7 +241,7 @@ export async function assertSnapshotStoreConformance<State, Summary>(options: {
   const replaced = await options.store.replace(options.id, options.replacement, 1);
   assert(replaced.revision === 2, "Replace must increment the revision.");
   await options.store.delete(options.id);
-  assert(await options.store.load(options.id) === null, "Deleted document must not load.");
+  assert((await options.store.load(options.id)) === null, "Deleted document must not load.");
 }
 
 function assert(condition: unknown, message: string): asserts condition {
