@@ -60,7 +60,7 @@
     "firebase-tools": "^15.25.1",
     "jsdom": "^26.1.0",
     "lz-string": "^1.5.0",
-    "markdownlint-cli2": "0.22.0",
+    "markdownlint-cli2": "0.23.2",
     "prettier": "3.9.6",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
