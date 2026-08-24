@@ -56,7 +56,7 @@
     "eslint": "10.8.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "fake-indexeddb": "^6.2.2",
-    "firebase": "^12.0.0",
+    "firebase": "^12.18.0",
     "firebase-tools": "^15.25.1",
     "jsdom": "^26.1.0",
     "lz-string": "^1.5.0",
