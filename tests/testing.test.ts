@@ -6,7 +6,7 @@ import {
   InMemoryOutboxStore,
   assertSnapshotStoreConformance,
 } from "@mikejhill/portable-document-testing";
-import { definition, initialState } from "./fixture";
+import { definition, initialState, type TestState } from "./fixture";
 
 describe("testing reference adapters", () => {
   it("provides deterministic clocks with guarded progression", () => {
@@ -119,5 +119,29 @@ describe("testing reference adapters", () => {
       failure: { code: "conflict" },
       latest: { revision: 3 },
     });
+  });
+
+  it("rejects invalid states in the in-memory reference store", async () => {
+    const store = new InMemoryDocumentStore(definition, () => 10);
+    const invalid = { title: 1, items: {} } as unknown as TestState;
+    await expect(store.create("doc", invalid)).rejects.toThrow(/Invalid document state/);
+    await store.create("doc", initialState);
+    await expect(store.replace("doc", invalid, 1)).rejects.toThrow(/Invalid document state/);
+    expect(await store.load("doc")).toMatchObject({ revision: 1, state: initialState });
+  });
+
+  it("reports repositories that break the snapshot contract", async () => {
+    const store = new InMemoryDocumentStore(definition, () => 10);
+    const forgetful = Object.assign(Object.create(store) as typeof store, {
+      delete: async () => undefined,
+    });
+    await expect(
+      assertSnapshotStoreConformance({
+        store: forgetful,
+        id: "doc",
+        initial: initialState,
+        replacement: { title: "Next", items: {} },
+      }),
+    ).rejects.toThrow("Repository conformance failure: Deleted document must not load.");
   });
 });

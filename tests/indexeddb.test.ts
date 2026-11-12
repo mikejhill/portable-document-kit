@@ -1,13 +1,37 @@
 import { IDBFactory } from "fake-indexeddb";
-import { describe, expect, it } from "vitest";
-import { createCommandEnvelope } from "@mikejhill/portable-document-core";
+import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+import { createCommandEnvelope, defineDocument } from "@mikejhill/portable-document-core";
 import {
   IndexedDbDocumentStore,
   IndexedDbOutboxStore,
   IndexedDbUnavailableError,
+  IndexedDbUpgradeBlockedError,
 } from "@mikejhill/portable-document-indexeddb";
 import { assertSnapshotStoreConformance } from "@mikejhill/portable-document-testing";
-import { definition, initialState, type TestCommand } from "./fixture";
+import { definition, initialState, type TestCommand, type TestState } from "./fixture";
+
+type OpenRequestStub = {
+  error: DOMException | null;
+  onblocked?: () => void;
+  onerror?: () => void;
+};
+
+const stubFactory = (settle: (request: OpenRequestStub) => void): IDBFactory =>
+  ({
+    open() {
+      const request: OpenRequestStub = { error: null };
+      queueMicrotask(() => settle(request));
+      return request;
+    },
+  }) as unknown as IDBFactory;
+
+const openDatabase = (factory: IDBFactory, name: string, version: number) =>
+  new Promise<IDBDatabase>((resolve, reject) => {
+    const request = factory.open(name, version);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
 
 describe("IndexedDB adapters", () => {
   it("passes snapshot store conformance", async () => {
@@ -177,5 +201,138 @@ describe("IndexedDB adapters", () => {
     await store.delete("doc");
     expect(await store.listCheckpoints("doc")).toEqual([]);
     store.close();
+  });
+
+  it("rejects blocked upgrades and failed opens with explicit errors", async () => {
+    const blocked = new IndexedDbDocumentStore(definition, {
+      databaseName: "blocked",
+      indexedDB: stubFactory((request) => request.onblocked?.()),
+      broadcastChannel: null,
+    });
+    const blockedError = await blocked.load("doc").catch((error: unknown) => error);
+    expect(blockedError).toBeInstanceOf(IndexedDbUpgradeBlockedError);
+    expect(blockedError).toMatchObject({
+      name: "IndexedDbUpgradeBlockedError",
+      message: expect.stringMatching(/blocked/),
+    });
+    blocked.close();
+
+    const failed = new IndexedDbOutboxStore({
+      databaseName: "failed",
+      indexedDB: stubFactory((request) => request.onerror?.()),
+    });
+    await expect(failed.list("doc")).rejects.toThrow("IndexedDB open failed.");
+    failed.close();
+
+    const factory = new IDBFactory();
+    (await openDatabase(factory, "newer", 2)).close();
+    const newer = new IndexedDbDocumentStore(definition, {
+      databaseName: "newer",
+      indexedDB: factory,
+      broadcastChannel: null,
+    });
+    await expect(newer.load("doc")).rejects.toMatchObject({ name: "VersionError" });
+    newer.close();
+  });
+
+  it("refuses to store states that fail validation", async () => {
+    const store = new IndexedDbDocumentStore(definition, {
+      databaseName: "invalid-writes",
+      indexedDB: new IDBFactory(),
+      broadcastChannel: null,
+    });
+    const invalid = { title: 1, items: {} } as unknown as TestState;
+    await expect(store.create("doc", invalid)).rejects.toThrow(/invalid document state/);
+    await store.create("doc", initialState);
+    await expect(store.replace("doc", invalid, 1)).rejects.toThrow(/invalid document state/);
+    expect(await store.load("doc")).toMatchObject({ revision: 1, state: initialState });
+    store.close();
+  });
+
+  it("refuses stored records that the current definition cannot read", async () => {
+    const factory = new IDBFactory();
+    const writer = new IndexedDbDocumentStore(definition, {
+      databaseName: "shared-records",
+      indexedDB: factory,
+      broadcastChannel: null,
+    });
+    await writer.create("doc", initialState);
+    writer.close();
+
+    const otherType = new IndexedDbDocumentStore(
+      defineDocument({ ...definition, type: "other.document" }),
+      { databaseName: "shared-records", indexedDB: factory, broadcastChannel: null },
+    );
+    await expect(otherType.load("doc")).rejects.toThrow(/wrong type/);
+    otherType.close();
+
+    const stricter = new IndexedDbDocumentStore(
+      defineDocument({
+        ...definition,
+        stateSchema: z.object({
+          title: z.string().min(50),
+          items: z.record(z.string(), z.string()),
+        }),
+      }),
+      { databaseName: "shared-records", indexedDB: factory, broadcastChannel: null },
+    );
+    await expect(stricter.load("doc")).rejects.toThrow(/invalid or incompatible/);
+    await expect(stricter.listCheckpoints("doc")).rejects.toThrow(/checkpoint is invalid/);
+    stricter.close();
+  });
+
+  it("returns outbox records in staging order", async () => {
+    const outbox = new IndexedDbOutboxStore({
+      databaseName: "outbox-order",
+      indexedDB: new IDBFactory(),
+    });
+    const record = (id: string, stagedAt: number) => ({
+      envelope: createCommandEnvelope<TestCommand>({
+        id,
+        documentId: "doc",
+        documentType: definition.type,
+        baseRevision: 1,
+        command: { type: "title", value: id },
+      }),
+      stagedAt,
+    });
+    await outbox.put(record("a", 3));
+    await outbox.put(record("b", 1));
+    await outbox.put(record("c", 2));
+    expect((await outbox.list("doc")).map((value) => value.envelope.id)).toEqual(["b", "c", "a"]);
+    outbox.close();
+  });
+
+  it("notifies subscribers in other tabs through BroadcastChannel", async () => {
+    const factory = new IDBFactory();
+    const writer = new IndexedDbDocumentStore(definition, {
+      databaseName: "tabs",
+      indexedDB: factory,
+      broadcastChannel: BroadcastChannel,
+    });
+    const reader = new IndexedDbDocumentStore(definition, {
+      databaseName: "tabs",
+      indexedDB: factory,
+    });
+    const received: string[] = [];
+    const listener = vi.fn((snapshot: { id: string; revision: number }) =>
+      received.push(`${snapshot.id}:${snapshot.revision}`),
+    );
+    reader.subscribe("doc", listener);
+
+    const foreign = new BroadcastChannel("tabs:portable-documents");
+    foreign.postMessage({ id: "doc" });
+    await writer.create("doc", initialState);
+    await vi.waitFor(() => expect(received).toEqual(["doc:1"]));
+
+    await writer.delete("doc");
+    await writer.create("other", initialState);
+    await vi.waitFor(async () => expect(await reader.load("other")).not.toBeNull());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(received).toEqual(["doc:1"]);
+
+    foreign.close();
+    writer.close();
+    reader.close();
   });
 });

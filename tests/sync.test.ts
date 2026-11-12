@@ -240,4 +240,56 @@ describe("OCC replication", () => {
     await engine.receiveRemote({ ...initial, revision: 9 });
     expect(engine.getSnapshot()).toMatchObject({ status: "conflict" });
   });
+
+  it("generates unique command ids by default", async () => {
+    const remote = new InMemoryDocumentStore(definition);
+    const initial = await remote.create("doc", initialState);
+    const outbox = new InMemoryOutboxStore<Parameters<typeof definition.reduce>[1]>();
+    const engine = new OccReplicationEngine(definition, initial, remote, outbox, {
+      idleDelayMs: 100_000,
+      maxDelayMs: 100_000,
+    });
+    await engine.dispatch({ type: "set", id: "b", value: "B" });
+    await engine.dispatch({ type: "set", id: "c", value: "C" });
+    const ids = engine.getSnapshot().pending.map((record) => record.envelope.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+    for (const id of ids) expect(id).toMatch(/^[\w-]{8,}$/);
+    engine.dispose();
+  });
+
+  it("flushes after the idle delay and caps continuous edits at the max delay", async () => {
+    vi.useFakeTimers();
+    try {
+      const remote = new InMemoryDocumentStore(definition);
+      const initial = await remote.create("doc", initialState);
+      const outbox = new InMemoryOutboxStore<Parameters<typeof definition.reduce>[1]>();
+      let sequence = 0;
+      const engine = new OccReplicationEngine(definition, initial, remote, outbox, {
+        createId: () => `command-${++sequence}`,
+        idleDelayMs: 100,
+        maxDelayMs: 250,
+      });
+
+      await engine.dispatch({ type: "title", value: "Idle" });
+      await vi.advanceTimersByTimeAsync(99);
+      expect(engine.getSnapshot().status).toBe("pending");
+      await vi.advanceTimersByTimeAsync(1);
+      expect(engine.getSnapshot()).toMatchObject({ status: "clean", head: { revision: 2 } });
+
+      for (let index = 0; index < 3; index += 1) {
+        await engine.dispatch({ type: "title", value: `Burst ${index}` });
+        await vi.advanceTimersByTimeAsync(80);
+      }
+      expect(engine.getSnapshot()).toMatchObject({ status: "pending", head: { revision: 2 } });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(engine.getSnapshot()).toMatchObject({
+        status: "clean",
+        head: { revision: 3, state: { title: "Burst 2" } },
+      });
+      engine.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
