@@ -14,10 +14,10 @@
     "@mikejhill/portable-document-react": "^0.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "zod": "^3.25.0"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^5.0.0",
-    "vite": "^7.0.0"
+    "vite": "^8.3.8"
   }
 }

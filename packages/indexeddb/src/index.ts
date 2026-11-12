@@ -93,7 +93,10 @@ class IndexedDbDatabase {
   }
 
   public close(): void {
-    void this.promise?.then((database) => database.close());
+    void this.promise?.then(
+      (database) => database.close(),
+      () => undefined,
+    );
     this.promise = null;
   }
 }
